@@ -11,6 +11,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/gateway ./cmd/gateway \
 
 FROM python:3.12-slim
 
+ARG APP_VERSION=dev
 RUN apt-get update \
     && apt-get install -y --no-install-recommends gcc libc6-dev \
     && python -m venv /opt/venv \
@@ -32,6 +33,7 @@ ENV TELEGRAM_SYNC_SCRIPT=/app/scripts/telegram_profile_sync.py
 ENV TELEGRAM_APPLY_SCRIPT=/app/scripts/telegram_profile_apply.py
 ENV TELEGRAM_MESSAGE_SCRIPT=/app/scripts/telegram_message_send.py
 ENV TELEGRAM_LISTEN_SCRIPT=/app/scripts/telegram_keyword_listen.py
+ENV APP_IMAGE_VERSION=${APP_VERSION}
 USER app
 
 CMD ["/app/gateway"]

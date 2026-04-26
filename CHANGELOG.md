@@ -1,5 +1,19 @@
 # 更新日志
 
+## v1.0.4 - 2026-04-26
+
+### 优化
+
+- Docker Compose 为前端和后端镜像增加明确版本 tag：`tg-frontend:1.0.4`、`tg-backend:1.0.4`。
+- 前端和后端 Dockerfile 增加 `APP_VERSION` 构建参数，版本变化时会触发新镜像构建，降低 1Panel 继续复用旧镜像的概率。
+- 前端镜像内生成 `/version.json`，便于确认当前容器实际运行版本。
+
+### 验证
+
+- `npm run build` 通过。
+- `go test ./...` 通过。
+- `docker compose -f docker-compose.yml config` 通过。
+
 ## v1.0.3 - 2026-04-26
 
 ### 修复
