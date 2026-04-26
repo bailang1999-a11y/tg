@@ -1,6 +1,6 @@
 # TG 营销助手
 
-TG 营销助手是一套基于 Vue、Go、PostgreSQL、Redis、NATS 的运营控制台，仓库已内置 Docker Compose 生产部署文件和一键部署脚本。
+TG 营销助手是一套基于 Vue、Go、PostgreSQL、Redis、NATS 的运营控制台，仓库已内置根目录 `docker-compose.yml`，可以一条命令启动完整服务。
 
 ## 一键部署
 
@@ -9,24 +9,36 @@ TG 营销助手是一套基于 Vue、Go、PostgreSQL、Redis、NATS 的运营控
 ```bash
 git clone https://github.com/bailang1999-a11y/tg.git
 cd tg
-./deploy.sh
+docker compose up -d --build
 ```
 
-首次运行会自动生成 `deploy/.env.production` 并停止部署。编辑这个文件，把所有 `replace-with-*` 占位值替换成真实密码/密钥后，再执行一次：
-
-```bash
-./deploy.sh
-```
-
-默认前端端口由 `deploy/.env.production` 里的 `WEB_PORT` 控制，模板默认是 `8088`。
+默认访问地址：
 
 ```text
 http://服务器IP:8088
 ```
 
-## 一键部署脚本
+根目录 [docker-compose.yml](docker-compose.yml) 已经写好 gateway、worker、scheduler、frontend、PostgreSQL、Redis、NATS、数据卷和网络。
 
-仓库根目录已包含 [deploy.sh](deploy.sh)，内容如下：
+公网生产环境上线前，请先编辑 `docker-compose.yml`，替换里面带有 `change_this` / `Change_This` 的示例密码和密钥：
+
+- `POSTGRES_PASSWORD`
+- `REDIS_PASSWORD`
+- `JWT_SECRET`
+- `ADMIN_PASSWORD`
+- `CORS_ORIGINS`
+
+## 可选：环境变量版部署脚本
+
+如果你更想把密码放在 `.env.production`，也可以使用仓库根目录的 [deploy.sh](deploy.sh)：
+
+```bash
+./deploy.sh
+```
+
+首次运行会自动生成 `deploy/.env.production` 并停止部署。编辑这个文件，把所有 `replace-with-*` 占位值替换成真实密码/密钥后，再执行一次 `./deploy.sh`。
+
+`deploy.sh` 内容如下：
 
 ```sh
 #!/usr/bin/env sh
@@ -65,7 +77,22 @@ docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
 
 ## 常用命令
 
-### 生产版 `docker-compose.prod.yml`
+### 根目录一键版 `docker-compose.yml`
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose logs -f gateway
+docker compose down
+```
+
+清理数据卷：
+
+```bash
+docker compose down -v
+```
+
+### 环境变量生产版 `deploy/docker-compose.prod.yml`
 
 ```bash
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml ps
@@ -73,7 +100,7 @@ docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.y
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml down
 ```
 
-### 本地/开发版 `docker-compose.yml`
+### 开发版 `deploy/docker-compose.yml`
 
 仓库也保留了 [deploy/docker-compose.yml](deploy/docker-compose.yml)，适合本地开发或内网临时测试。它带有开发默认密码和调试端口，不建议直接用于公网生产。
 

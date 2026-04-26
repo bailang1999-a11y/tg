@@ -1,14 +1,68 @@
 # TG 营销助手部署说明
 
-## Docker Compose 一键部署
+## 根目录 `docker-compose.yml` 一键部署
 
-最简单的方式是在仓库根目录运行：
+最简单的方式是在仓库根目录使用内置的 `docker-compose.yml`：
+
+```bash
+git clone https://github.com/bailang1999-a11y/tg.git
+cd tg
+docker compose up -d --build
+```
+
+默认访问地址：
+
+```text
+http://服务器IP:8088
+```
+
+这个文件已经包含：
+
+- `frontend`
+- `gateway`
+- `worker`
+- `scheduler`
+- `postgres`
+- `redis`
+- `nats`
+- 网络 `tg_marketing`
+- 数据卷 `tg_storage`、`tg_postgres`、`tg_redis`、`tg_nats`
+
+公网生产环境上线前，请先编辑根目录 `docker-compose.yml`，替换里面带有 `change_this` / `Change_This` 的示例密码和密钥：
+
+- `POSTGRES_PASSWORD`
+- `REDIS_PASSWORD`
+- `JWT_SECRET`
+- `ADMIN_PASSWORD`
+- `CORS_ORIGINS`
+
+常用命令：
+
+```bash
+docker compose ps
+docker compose logs -f gateway
+docker compose logs -f worker
+docker compose logs -f scheduler
+docker compose down
+```
+
+清理全部数据卷：
+
+```bash
+docker compose down -v
+```
+
+## 环境变量版 `deploy.sh`
+
+如果你希望把密码放到 `deploy/.env.production`，可以使用仓库根目录的 `deploy.sh`。
+
+首次运行：
 
 ```bash
 ./deploy.sh
 ```
 
-首次运行会自动生成 `deploy/.env.production` 并提示你先替换占位值。编辑完成后再次运行：
+脚本会自动生成 `deploy/.env.production` 并提示你先替换占位值。编辑完成后再次运行：
 
 ```bash
 ./deploy.sh
@@ -20,7 +74,7 @@
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml up -d --build
 ```
 
-## 手动部署
+## 手动部署环境变量版
 
 ### 生产版 `docker-compose.prod.yml`
 
