@@ -1,0 +1,259 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: codex3-secret
+type: Opaque
+stringData:
+  DATABASE_DSN: host=postgres user=<db-user> password=<db-password> dbname=codex3 port=5432 sslmode=require TimeZone=Asia/Shanghai
+  JWT_SECRET: replace-with-production-secret
+  ADMIN_USERNAME: admin
+  ADMIN_PASSWORD: replace-with-production-admin-password
+  ADMIN_EMAIL: admin@example.com
+  REDIS_ADDR: redis:6379
+  NATS_URL: nats://nats:4222
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codex3-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: codex3-gateway
+  template:
+    metadata:
+      labels:
+        app: codex3-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: codex3/backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: APP_ENV
+              value: production
+            - name: APP_PORT
+              value: "8080"
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: codex3-secret
+                  key: DATABASE_DSN
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: codex3-secret
+                  key: JWT_SECRET
+            - name: ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: codex3-secret
+                  key: ADMIN_USERNAME
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: codex3-secret
+                  key: ADMIN_PASSWORD
+            - name: ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: codex3-secret
+                  key: ADMIN_EMAIL
+            - name: REDIS_ADDR
+              valueFrom:
+                secretKeyRef:
+                  name: codex3-secret
+                  key: REDIS_ADDR
+            - name: NATS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: codex3-secret
+                  key: NATS_URL
+            - name: DB_MAX_IDLE_CONNS
+              value: "10"
+            - name: DB_MAX_OPEN_CONNS
+              value: "40"
+            - name: DB_CONN_MAX_LIFETIME_SECONDS
+              value: "1800"
+            - name: DB_CONN_MAX_IDLE_TIME_SECONDS
+              value: "300"
+            - name: HTTP_MAX_IN_FLIGHT
+              value: "2000"
+            - name: TASK_RUN_LOCK_STALE_SECONDS
+              value: "93600"
+            - name: TASK_QUEUE_ACK_WAIT_SECONDS
+              value: "93600"
+            - name: TASK_QUEUE_MAX_DELIVER
+              value: "5"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codex3-gateway
+spec:
+  selector:
+    app: codex3-gateway
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codex3-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: codex3-worker
+  template:
+    metadata:
+      labels:
+        app: codex3-worker
+    spec:
+      containers:
+        - name: worker
+          image: codex3/backend:latest
+          command: ["/app/worker"]
+          envFrom:
+            - secretRef:
+                name: codex3-secret
+          env:
+            - name: DB_MAX_IDLE_CONNS
+              value: "5"
+            - name: DB_MAX_OPEN_CONNS
+              value: "20"
+            - name: DB_CONN_MAX_LIFETIME_SECONDS
+              value: "1800"
+            - name: DB_CONN_MAX_IDLE_TIME_SECONDS
+              value: "300"
+            - name: WORKER_CONCURRENCY
+              value: "8"
+            - name: TASK_RUN_LOCK_STALE_SECONDS
+              value: "93600"
+            - name: TASK_QUEUE_ACK_WAIT_SECONDS
+              value: "93600"
+            - name: TASK_QUEUE_MAX_DELIVER
+              value: "5"
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: codex3-worker-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: codex3-worker
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: External
+      external:
+        metric:
+          name: nats_jetstream_consumer_num_pending
+          selector:
+            matchLabels:
+              stream: TASKS
+        target:
+          type: AverageValue
+          averageValue: "100"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codex3-scheduler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: codex3-scheduler
+  template:
+    metadata:
+      labels:
+        app: codex3-scheduler
+    spec:
+      containers:
+        - name: scheduler
+          image: codex3/backend:latest
+          command: ["/app/scheduler"]
+          envFrom:
+            - secretRef:
+                name: codex3-secret
+          env:
+            - name: DB_MAX_IDLE_CONNS
+              value: "2"
+            - name: DB_MAX_OPEN_CONNS
+              value: "5"
+            - name: DB_CONN_MAX_LIFETIME_SECONDS
+              value: "1800"
+            - name: DB_CONN_MAX_IDLE_TIME_SECONDS
+              value: "300"
+            - name: LOG_RETENTION_DAYS
+              value: "30"
+            - name: SCHEDULER_INTERVAL_SECONDS
+              value: "3600"
+            - name: IMPORT_STAGE_RETENTION_HOURS
+              value: "24"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codex3-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: codex3-frontend
+  template:
+    metadata:
+      labels:
+        app: codex3-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: codex3/frontend:latest
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codex3-frontend
+spec:
+  selector:
+    app: codex3-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codex3
+spec:
+  rules:
+    - host: codex3.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: codex3-gateway
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: codex3-frontend
+                port:
+                  number: 80

@@ -1,0 +1,132 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-codex3}
+      POSTGRES_USER: ${POSTGRES_USER:-codex3}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-codex3} -d ${POSTGRES_DB:-codex3}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+
+  nats:
+    image: nats:2.12-alpine
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - nats_data:/data
+
+  gateway:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      APP_PORT: 8080
+      DATABASE_DSN: host=postgres user=${POSTGRES_USER:-codex3} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB:-codex3} port=5432 sslmode=disable TimeZone=Asia/Shanghai
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      AUTO_MIGRATE: "true"
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set ADMIN_PASSWORD}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-10}
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-40}
+      DB_CONN_MAX_LIFETIME_SECONDS: ${DB_CONN_MAX_LIFETIME_SECONDS:-1800}
+      DB_CONN_MAX_IDLE_TIME_SECONDS: ${DB_CONN_MAX_IDLE_TIME_SECONDS:-300}
+      HTTP_MAX_IN_FLIGHT: ${HTTP_MAX_IN_FLIGHT:-2000}
+      TASK_RUN_LOCK_STALE_SECONDS: ${TASK_RUN_LOCK_STALE_SECONDS:-93600}
+    ports:
+      - "${HTTP_PORT:-8088}:8080"
+    volumes:
+      - app_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    command: ["/app/worker"]
+    environment:
+      APP_ENV: production
+      DATABASE_DSN: host=postgres user=${POSTGRES_USER:-codex3} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB:-codex3} port=5432 sslmode=disable TimeZone=Asia/Shanghai
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: ${JWT_SECRET}
+      DB_MAX_IDLE_CONNS: ${WORKER_DB_MAX_IDLE_CONNS:-5}
+      DB_MAX_OPEN_CONNS: ${WORKER_DB_MAX_OPEN_CONNS:-20}
+      DB_CONN_MAX_LIFETIME_SECONDS: ${DB_CONN_MAX_LIFETIME_SECONDS:-1800}
+      DB_CONN_MAX_IDLE_TIME_SECONDS: ${DB_CONN_MAX_IDLE_TIME_SECONDS:-300}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-8}
+      TASK_RUN_LOCK_STALE_SECONDS: ${TASK_RUN_LOCK_STALE_SECONDS:-93600}
+      TASK_QUEUE_ACK_WAIT_SECONDS: ${TASK_QUEUE_ACK_WAIT_SECONDS:-93600}
+      TASK_QUEUE_MAX_DELIVER: ${TASK_QUEUE_MAX_DELIVER:-5}
+    volumes:
+      - app_storage:/app/storage
+    depends_on:
+      gateway:
+        condition: service_started
+
+  scheduler:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    command: ["/app/scheduler"]
+    environment:
+      APP_ENV: production
+      DATABASE_DSN: host=postgres user=${POSTGRES_USER:-codex3} password=${POSTGRES_PASSWORD} dbname=${POSTGRES_DB:-codex3} port=5432 sslmode=disable TimeZone=Asia/Shanghai
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      DB_MAX_IDLE_CONNS: ${SCHEDULER_DB_MAX_IDLE_CONNS:-2}
+      DB_MAX_OPEN_CONNS: ${SCHEDULER_DB_MAX_OPEN_CONNS:-5}
+      DB_CONN_MAX_LIFETIME_SECONDS: ${DB_CONN_MAX_LIFETIME_SECONDS:-1800}
+      DB_CONN_MAX_IDLE_TIME_SECONDS: ${DB_CONN_MAX_IDLE_TIME_SECONDS:-300}
+      LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-30}
+      SCHEDULER_INTERVAL_SECONDS: ${SCHEDULER_INTERVAL_SECONDS:-3600}
+      IMPORT_STAGE_RETENTION_HOURS: ${IMPORT_STAGE_RETENTION_HOURS:-24}
+    volumes:
+      - app_storage:/app/storage
+    depends_on:
+      gateway:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      gateway:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  nats_data:
+  app_storage:

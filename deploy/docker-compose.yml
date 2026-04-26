@@ -1,0 +1,153 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: codex3
+      POSTGRES_USER: codex3
+      POSTGRES_PASSWORD: codex3
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codex3 -d codex3"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: codex3
+      DB_PASSWORD: codex3
+      DB_NAME: codex3
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 5000
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  nats:
+    image: nats:2.12-alpine
+    command: ["-js", "-sd", "/data"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: codex3
+      MINIO_ROOT_PASSWORD: codex3-secret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+
+  gateway:
+    build:
+      context: ../backend
+    environment:
+      APP_ENV: development
+      APP_PORT: 8080
+      DATABASE_DSN: host=postgres user=codex3 password=codex3 dbname=codex3 port=5432 sslmode=disable TimeZone=UTC
+      REDIS_ADDR: redis:6379
+      NATS_URL: nats://nats:4222
+      JWT_SECRET: local-dev-secret-change-me
+      AUTO_MIGRATE: "true"
+      DB_MAX_IDLE_CONNS: 10
+      DB_MAX_OPEN_CONNS: 40
+      DB_CONN_MAX_LIFETIME_SECONDS: 1800
+      DB_CONN_MAX_IDLE_TIME_SECONDS: 300
+      HTTP_MAX_IN_FLIGHT: 2000
+      TASK_RUN_LOCK_STALE_SECONDS: 93600
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: admin123456
+      ADMIN_EMAIL: admin@example.com
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8088
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../backend/storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+
+  worker:
+    build:
+      context: ../backend
+    command: ["/app/worker"]
+    environment:
+      DATABASE_DSN: host=postgres user=codex3 password=codex3 dbname=codex3 port=5432 sslmode=disable TimeZone=UTC
+      REDIS_ADDR: redis:6379
+      NATS_URL: nats://nats:4222
+      DB_MAX_IDLE_CONNS: 5
+      DB_MAX_OPEN_CONNS: 20
+      DB_CONN_MAX_LIFETIME_SECONDS: 1800
+      DB_CONN_MAX_IDLE_TIME_SECONDS: 300
+      WORKER_CONCURRENCY: 8
+      TASK_RUN_LOCK_STALE_SECONDS: 93600
+      TASK_QUEUE_ACK_WAIT_SECONDS: 93600
+      TASK_QUEUE_MAX_DELIVER: 5
+    volumes:
+      - ../backend/storage:/app/storage
+    depends_on:
+      gateway:
+        condition: service_started
+
+  scheduler:
+    build:
+      context: ../backend
+    command: ["/app/scheduler"]
+    environment:
+      DATABASE_DSN: host=postgres user=codex3 password=codex3 dbname=codex3 port=5432 sslmode=disable TimeZone=UTC
+      REDIS_ADDR: redis:6379
+      DB_MAX_IDLE_CONNS: 2
+      DB_MAX_OPEN_CONNS: 5
+      DB_CONN_MAX_LIFETIME_SECONDS: 1800
+      DB_CONN_MAX_IDLE_TIME_SECONDS: 300
+      LOG_RETENTION_DAYS: 30
+      SCHEDULER_INTERVAL_SECONDS: 3600
+      IMPORT_STAGE_RETENTION_HOURS: 24
+    volumes:
+      - ../backend/storage:/app/storage
+    depends_on:
+      gateway:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8088:80"
+    depends_on:
+      gateway:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
+  nats_data:
+  minio_data:

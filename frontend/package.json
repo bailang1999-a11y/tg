@@ -1,0 +1,28 @@
+{
+  "name": "codex3-ops-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vue-flow/core": "^1.47.0",
+    "@vueuse/core": "^14.1.0",
+    "pinia": "^3.0.4",
+    "vue": "^3.5.25",
+    "vue-router": "^4.6.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.3",
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0",
+    "vue-tsc": "^3.1.8"
+  }
+}
+

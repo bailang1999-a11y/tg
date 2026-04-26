@@ -1,0 +1,470 @@
+openapi: 3.1.0
+info:
+  title: Codex3 API
+  version: 0.1.0
+servers:
+  - url: http://localhost:8080
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    CreateUserRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          minLength: 8
+        email:
+          type: string
+        role:
+          type: string
+          enum: [admin, user]
+    APIResponse:
+      type: object
+      properties:
+        data: {}
+        error:
+          type: string
+paths:
+  /health:
+    get:
+      security: []
+      summary: Health check
+      responses:
+        "200":
+          description: OK
+  /api/v1/auth/login:
+    post:
+      security: []
+      summary: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Token and user
+  /api/v1/me:
+    get:
+      summary: Current user
+      responses:
+        "200":
+          description: User
+  /api/v1/dashboard:
+    get:
+      summary: Dashboard statistics
+      responses:
+        "200":
+          description: Dashboard payload
+  /api/v1/users:
+    get:
+      summary: List users
+      responses:
+        "200":
+          description: Users
+    post:
+      summary: Create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: Created user
+  /api/v1/users/{id}/status:
+    put:
+      summary: Enable or disable a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, disabled]
+      responses:
+        "200":
+          description: Updated status
+  /api/v1/groups/{resource}:
+    get:
+      summary: List groups for a resource
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Groups
+    post:
+      summary: Create group
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Created group
+  /api/v1/groups/{resource}/{id}:
+    delete:
+      summary: Delete group
+      description: Deleting an avatar group also deletes all images in the group and local cache files.
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Deleted group
+  /api/v1/terminals:
+    get:
+      summary: List terminals
+      parameters:
+        - name: group_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Terminals
+  /api/v1/terminals/check:
+    post:
+      summary: Create account status check task
+      responses:
+        "201":
+          description: Task
+  /api/v1/imports:
+    post:
+      summary: Create import validation task
+      responses:
+        "201":
+          description: Task
+  /api/v1/imports/session:
+    post:
+      summary: Import session files
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                group_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Session import result
+  /api/v1/imports/tdata:
+    post:
+      summary: Import tdata folders or archives
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                group_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: TData import result
+  /api/v1/network-nodes:
+    get:
+      summary: List network nodes
+      responses:
+        "200":
+          description: Network nodes
+  /api/v1/network-nodes/import:
+    post:
+      summary: Import socks5 or http proxy nodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: One proxy per line
+                default_protocol:
+                  type: string
+                  enum: [socks5, http]
+                  description: Used when a line has no protocol prefix
+                group_id:
+                  type: string
+                  format: uuid
+                new_group_name:
+                  type: string
+      responses:
+        "201":
+          description: Import summary
+  /api/v1/network-nodes/test:
+    post:
+      summary: Create network batch test task
+      responses:
+        "201":
+          description: Task
+  /api/v1/targets:
+    get:
+      summary: List targets
+      parameters:
+        - name: group_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Targets
+  /api/v1/targets/import:
+    post:
+      summary: Import Telegram target links
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  description: One Telegram target link per line, for example https://t.me/AIGOGGGG
+                group_id:
+                  type: string
+                  format: uuid
+                new_group_name:
+                  type: string
+      responses:
+        "201":
+          description: Import summary
+  /api/v1/assets:
+    get:
+      summary: List assets
+      parameters:
+        - name: group_id
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Assets
+  /api/v1/assets/upload:
+    post:
+      summary: Upload avatar images, folders, or zip archives
+      description: Supports jpeg/jpg/png/gif avatar images and zip archives containing those image formats.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                group_id:
+                  type: string
+                  format: uuid
+                new_group_name:
+                  type: string
+      responses:
+        "201":
+          description: Upload summary
+  /api/v1/assets/{id}:
+    delete:
+      summary: Delete asset
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Deleted asset
+  /api/v1/workflows:
+    get:
+      summary: List workflows
+      responses:
+        "200":
+          description: Workflows
+    post:
+      summary: Create workflow
+      responses:
+        "201":
+          description: Workflow
+  /api/v1/workflows/{id}/run:
+    post:
+      summary: Create workflow execution task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Task
+  /api/v1/profiles/modify:
+    post:
+      summary: Create profile modification task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope]
+              properties:
+                scope:
+                  type: string
+                  enum: [terminal, group, all]
+                terminal_id:
+                  type: string
+                  format: uuid
+                terminal_group_id:
+                  type: string
+                  format: uuid
+                nicknames:
+                  type: array
+                  items:
+                    type: string
+                bios:
+                  type: array
+                  items:
+                    type: string
+                homepages:
+                  type: array
+                  items:
+                    type: string
+                avatar_asset_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+      responses:
+        "201":
+          description: Task
+  /api/v1/outreach/jobs:
+    post:
+      summary: Create compliant outreach dry-run task
+      responses:
+        "201":
+          description: Task
+  /api/v1/tasks:
+    get:
+      summary: List tasks
+      responses:
+        "200":
+          description: Tasks
+    post:
+      summary: Create generic task
+      responses:
+        "201":
+          description: Task
+  /api/v1/tasks/{id}/{action}:
+    put:
+      summary: Change task status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [start, pause, resume, stop, force, restart]
+      responses:
+        "200":
+          description: Updated task
+  /api/v1/tasks/{id}/logs:
+    get:
+      summary: List task logs
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Task logs
+  /api/v1/ws/logs:
+    get:
+      summary: WebSocket log stream
+      responses:
+        "101":
+          description: Switching protocols
