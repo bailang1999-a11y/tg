@@ -1,26 +1,251 @@
 # TG 营销助手
 
-TG 营销助手是一套基于 Vue、Go、PostgreSQL、Redis、NATS 的运营控制台，仓库已内置根目录 `docker-compose.yml`，可以一条命令启动完整服务。
+## 手动部署
 
-## 一键部署
+不建议没基础的用户直接公网使用。以下是 `docker-compose.yml` 配置示例，仓库根目录已经内置同款配置。
 
-服务器需要先安装 Docker 和 Docker Compose v2。然后执行：
+### 1. 拉取项目
 
 ```bash
 git clone https://github.com/bailang1999-a11y/tg.git
 cd tg
+```
+
+### 2. docker-compose.yml 配置示例
+
+如需自定义端口、密码、域名白名单，可以编辑仓库根目录的 `docker-compose.yml`。
+
+```yaml
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: tg-frontend
+    restart: unless-stopped
+    ports:
+      - "8088:80"
+    depends_on:
+      - gateway
+    networks:
+      - tg_marketing
+
+  gateway:
+    build:
+      context: ./backend
+    container_name: tg-gateway
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - tg_storage:/app/storage
+    environment:
+      APP_ENV: "production"
+      APP_PORT: "8080"
+      DATABASE_DSN: "host=postgres user=tg_marketing password=tg_postgres_change_this_9f8a3f6b9f2d4c1a dbname=tg_marketing port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+      REDIS_DB: "0"
+      NATS_URL: "nats://nats:4222"
+      JWT_SECRET: "tg_jwt_change_this_to_a_long_random_value_3b17a62f1b4a4e88a0b2e1c7f9d6a5c4"
+      AUTO_MIGRATE: "true"
+      ADMIN_USERNAME: "admin"
+      ADMIN_PASSWORD: "TG_Admin_Change_This_2026!"
+      ADMIN_EMAIL: "admin@example.com"
+      CORS_ORIGINS: "http://localhost:8088,http://127.0.0.1:8088"
+      DB_MAX_IDLE_CONNS: "10"
+      DB_MAX_OPEN_CONNS: "40"
+      DB_CONN_MAX_LIFETIME_SECONDS: "1800"
+      DB_CONN_MAX_IDLE_TIME_SECONDS: "300"
+      HTTP_MAX_IN_FLIGHT: "2000"
+      TASK_RUN_LOCK_STALE_SECONDS: "93600"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      nats:
+        condition: service_started
+    networks:
+      - tg_marketing
+
+  worker:
+    build:
+      context: ./backend
+    container_name: tg-worker
+    restart: unless-stopped
+    command: ["/app/worker"]
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - tg_storage:/app/storage
+    environment:
+      APP_ENV: "production"
+      DATABASE_DSN: "host=postgres user=tg_marketing password=tg_postgres_change_this_9f8a3f6b9f2d4c1a dbname=tg_marketing port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+      NATS_URL: "nats://nats:4222"
+      JWT_SECRET: "tg_jwt_change_this_to_a_long_random_value_3b17a62f1b4a4e88a0b2e1c7f9d6a5c4"
+      DB_MAX_IDLE_CONNS: "5"
+      DB_MAX_OPEN_CONNS: "20"
+      DB_CONN_MAX_LIFETIME_SECONDS: "1800"
+      DB_CONN_MAX_IDLE_TIME_SECONDS: "300"
+      WORKER_CONCURRENCY: "8"
+      TASK_RUN_LOCK_STALE_SECONDS: "93600"
+      TASK_QUEUE_ACK_WAIT_SECONDS: "93600"
+      TASK_QUEUE_MAX_DELIVER: "5"
+    depends_on:
+      - gateway
+    networks:
+      - tg_marketing
+
+  scheduler:
+    build:
+      context: ./backend
+    container_name: tg-scheduler
+    restart: unless-stopped
+    command: ["/app/scheduler"]
+    volumes:
+      - tg_storage:/app/storage
+    environment:
+      APP_ENV: "production"
+      DATABASE_DSN: "host=postgres user=tg_marketing password=tg_postgres_change_this_9f8a3f6b9f2d4c1a dbname=tg_marketing port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+      REDIS_ADDR: "redis:6379"
+      REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+      JWT_SECRET: "tg_jwt_change_this_to_a_long_random_value_3b17a62f1b4a4e88a0b2e1c7f9d6a5c4"
+      DB_MAX_IDLE_CONNS: "2"
+      DB_MAX_OPEN_CONNS: "5"
+      DB_CONN_MAX_LIFETIME_SECONDS: "1800"
+      DB_CONN_MAX_IDLE_TIME_SECONDS: "300"
+      LOG_RETENTION_DAYS: "30"
+      SCHEDULER_INTERVAL_SECONDS: "3600"
+      IMPORT_STAGE_RETENTION_HOURS: "24"
+    depends_on:
+      - gateway
+    networks:
+      - tg_marketing
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: tg-postgres
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - tg_postgres:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
+    environment:
+      POSTGRES_DB: "tg_marketing"
+      POSTGRES_USER: "tg_marketing"
+      POSTGRES_PASSWORD: "tg_postgres_change_this_9f8a3f6b9f2d4c1a"
+      PGDATA: "/var/lib/postgresql/data"
+      TZ: "Asia/Shanghai"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tg_marketing -d tg_marketing"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - tg_marketing
+
+  redis:
+    image: redis:7-alpine
+    container_name: tg-redis
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 100000
+        hard: 100000
+    volumes:
+      - tg_redis:/data
+    command:
+      - sh
+      - -c
+      - redis-server --appendonly yes --appendfsync everysec --requirepass "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+    environment:
+      REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+      REDISCLI_AUTH: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+      TZ: "Asia/Shanghai"
+    networks:
+      - tg_marketing
+
+  nats:
+    image: nats:2.12-alpine
+    container_name: tg-nats
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data"]
+    volumes:
+      - tg_nats:/data
+    networks:
+      - tg_marketing
+
+networks:
+  tg_marketing:
+    driver: bridge
+
+volumes:
+  tg_storage:
+  tg_postgres:
+  tg_redis:
+  tg_nats:
+```
+
+### 3. 启动服务
+
+```bash
 docker compose up -d --build
 ```
 
-默认访问地址：
+### 4. 访问后台
 
 ```text
 http://服务器IP:8088
 ```
 
-根目录 [docker-compose.yml](docker-compose.yml) 已经写好 gateway、worker、scheduler、frontend、PostgreSQL、Redis、NATS、数据卷和网络。
+默认管理员：
 
-公网生产环境上线前，请先编辑 `docker-compose.yml`，替换里面带有 `change_this` / `Change_This` 的示例密码和密钥：
+```text
+账号：admin
+密码：TG_Admin_Change_This_2026!
+```
+
+## 常用命令
+
+查看运行状态：
+
+```bash
+docker compose ps
+```
+
+查看日志：
+
+```bash
+docker compose logs -f gateway
+docker compose logs -f worker
+docker compose logs -f scheduler
+```
+
+停止服务：
+
+```bash
+docker compose down
+```
+
+停止并清理全部数据卷：
+
+```bash
+docker compose down -v
+```
+
+## 上线提醒
+
+公网部署前建议修改 `docker-compose.yml` 里的示例密码和密钥，重点替换：
 
 - `POSTGRES_PASSWORD`
 - `REDIS_PASSWORD`
@@ -28,116 +253,4 @@ http://服务器IP:8088
 - `ADMIN_PASSWORD`
 - `CORS_ORIGINS`
 
-## 可选：环境变量版部署脚本
-
-如果你更想把密码放在 `.env.production`，也可以使用仓库根目录的 [deploy.sh](deploy.sh)：
-
-```bash
-./deploy.sh
-```
-
-首次运行会自动生成 `deploy/.env.production` 并停止部署。编辑这个文件，把所有 `replace-with-*` 占位值替换成真实密码/密钥后，再执行一次 `./deploy.sh`。
-
-`deploy.sh` 内容如下：
-
-```sh
-#!/usr/bin/env sh
-set -eu
-
-ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-ENV_FILE="$ROOT_DIR/deploy/.env.production"
-ENV_TEMPLATE="$ROOT_DIR/deploy/.env.production.example"
-COMPOSE_FILE="$ROOT_DIR/deploy/docker-compose.prod.yml"
-
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Docker is not installed or not in PATH." >&2
-  exit 1
-fi
-
-if ! docker compose version >/dev/null 2>&1; then
-  echo "Docker Compose v2 is not available. Install Docker Desktop or the docker compose plugin." >&2
-  exit 1
-fi
-
-if [ ! -f "$ENV_FILE" ]; then
-  cp "$ENV_TEMPLATE" "$ENV_FILE"
-  echo "Created deploy/.env.production from template."
-  echo "Edit deploy/.env.production and replace every replace-with-* value, then run ./deploy.sh again."
-  exit 1
-fi
-
-if grep -q "replace-with-" "$ENV_FILE"; then
-  echo "deploy/.env.production still contains replace-with-* placeholders. Replace them before deploying." >&2
-  exit 1
-fi
-
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
-```
-
-## 常用命令
-
-### 根目录一键版 `docker-compose.yml`
-
-```bash
-docker compose up -d --build
-docker compose ps
-docker compose logs -f gateway
-docker compose down
-```
-
-清理数据卷：
-
-```bash
-docker compose down -v
-```
-
-### 环境变量生产版 `deploy/docker-compose.prod.yml`
-
-```bash
-docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml ps
-docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml logs -f gateway
-docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml down
-```
-
-### 开发版 `deploy/docker-compose.yml`
-
-仓库也保留了 [deploy/docker-compose.yml](deploy/docker-compose.yml)，适合本地开发或内网临时测试。它带有开发默认密码和调试端口，不建议直接用于公网生产。
-
-启动：
-
-```bash
-docker compose -f deploy/docker-compose.yml up -d --build
-```
-
-查看状态和日志：
-
-```bash
-docker compose -f deploy/docker-compose.yml ps
-docker compose -f deploy/docker-compose.yml logs -f gateway
-```
-
-停止：
-
-```bash
-docker compose -f deploy/docker-compose.yml down
-```
-
-默认访问地址：
-
-```text
-http://服务器IP:8088
-```
-
-## 生产安全
-
-上线前必须替换：
-
-- `JWT_SECRET`：至少 32 位随机字符串。
-- `ADMIN_PASSWORD`：后台初始管理员密码，不能使用默认值。
-- `POSTGRES_PASSWORD` / `REDIS_PASSWORD`：数据库和缓存密码。
-- `CORS_ORIGINS`：生产域名，例如 `https://ops.example.com`。
-
-后端在 `APP_ENV=production` 时会拒绝使用默认/占位的 `JWT_SECRET` 或 `ADMIN_PASSWORD` 启动。
-
-不要提交真实生产密钥。真实配置只保存在服务器的 `deploy/.env.production`。
+更多部署说明见 [DEPLOY.md](DEPLOY.md)。
