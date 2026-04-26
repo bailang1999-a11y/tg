@@ -65,10 +65,41 @@ docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps
 
 ## 常用命令
 
+### 生产版 `docker-compose.prod.yml`
+
 ```bash
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml ps
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml logs -f gateway
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml down
+```
+
+### 本地/开发版 `docker-compose.yml`
+
+仓库也保留了 [deploy/docker-compose.yml](deploy/docker-compose.yml)，适合本地开发或内网临时测试。它带有开发默认密码和调试端口，不建议直接用于公网生产。
+
+启动：
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+查看状态和日志：
+
+```bash
+docker compose -f deploy/docker-compose.yml ps
+docker compose -f deploy/docker-compose.yml logs -f gateway
+```
+
+停止：
+
+```bash
+docker compose -f deploy/docker-compose.yml down
+```
+
+默认访问地址：
+
+```text
+http://服务器IP:8088
 ```
 
 ## 生产安全

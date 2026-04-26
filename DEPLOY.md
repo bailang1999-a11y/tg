@@ -22,6 +22,8 @@ docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.y
 
 ## 手动部署
 
+### 生产版 `docker-compose.prod.yml`
+
 1. 进入项目部署目录：
 
    ```bash
@@ -52,6 +54,50 @@ docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.y
    ```text
    http://服务器IP:8088
    ```
+
+### 本地/开发版 `docker-compose.yml`
+
+`deploy/docker-compose.yml` 是本地开发/内网测试用的 compose 文件，包含 PostgreSQL、PgBouncer、Redis、NATS、MinIO、gateway、worker、scheduler、frontend。
+
+它默认会暴露数据库、Redis、NATS、MinIO 等端口，并且使用开发密码，例如 `admin123456`、`local-dev-secret-change-me`、`codex3`。公网生产环境请使用 `docker-compose.prod.yml` 和 `.env.production`。
+
+启动开发版：
+
+```bash
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+查看状态：
+
+```bash
+docker compose -f deploy/docker-compose.yml ps
+```
+
+查看日志：
+
+```bash
+docker compose -f deploy/docker-compose.yml logs -f gateway
+docker compose -f deploy/docker-compose.yml logs -f worker
+docker compose -f deploy/docker-compose.yml logs -f scheduler
+```
+
+停止：
+
+```bash
+docker compose -f deploy/docker-compose.yml down
+```
+
+清理开发版数据卷：
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v
+```
+
+默认访问地址：
+
+```text
+http://服务器IP:8088
+```
 
 ## 一键部署脚本内容
 
