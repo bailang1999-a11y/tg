@@ -29,7 +29,8 @@ services:
       # 修改左侧 36666 为你想对外访问的端口，例如 "80:80" 或 "18888:80"
       - "36666:80"
     depends_on:
-      - gateway
+      gateway:
+        condition: service_healthy
     networks:
       - tg_marketing
 
@@ -46,7 +47,7 @@ services:
       - tg_storage:/app/storage
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      APP_VERSION: "1.0.2"
+      APP_VERSION: "1.0.3"
       APP_ENV: "production"
       APP_PORT: "8080"
       # 数据库连接配置；如果修改 postgres.POSTGRES_PASSWORD，这里的 password 也要同步修改
@@ -85,6 +86,14 @@ services:
         condition: service_started
       nats:
         condition: service_started
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
     networks:
       - tg_marketing
 

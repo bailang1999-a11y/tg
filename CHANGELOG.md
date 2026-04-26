@@ -1,5 +1,19 @@
 # 更新日志
 
+## v1.0.3 - 2026-04-26
+
+### 修复
+
+- 修复前端 Nginx 在后端 `gateway` 重建后仍连接旧容器 IP，导致登录和接口请求 `502 Bad Gateway` 的问题。
+- Nginx 改为使用 Docker 内置 DNS 动态解析 `gateway`，避免更新过程中 upstream 地址失效。
+- 为 `gateway` 增加健康检查，前端容器等待后端健康后再启动。
+
+### 验证
+
+- `npm run build` 通过。
+- `go test ./...` 通过。
+- `docker compose -f docker-compose.yml config` 通过。
+
 ## v1.0.2 - 2026-04-26
 
 ### 修复
