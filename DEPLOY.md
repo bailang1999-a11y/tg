@@ -13,7 +13,7 @@ docker compose up -d --build
 默认访问地址：
 
 ```text
-http://服务器IP:28888
+http://服务器IP:36666
 ```
 
 这个文件已经包含：
@@ -103,10 +103,10 @@ docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.y
    docker compose --env-file .env.production -f docker-compose.prod.yml logs -f gateway
    ```
 
-5. 默认前端端口由 `WEB_PORT` 控制。模板里是 `28888`，浏览器访问：
+5. 默认前端端口由 `WEB_PORT` 控制。模板里是 `36666`，浏览器访问：
 
    ```text
-   http://服务器IP:28888
+   http://服务器IP:36666
    ```
 
 ### 本地/开发版 `docker-compose.yml`
@@ -150,7 +150,7 @@ docker compose -f deploy/docker-compose.yml down -v
 默认访问地址：
 
 ```text
-http://服务器IP:28888
+http://服务器IP:36666
 ```
 
 ## 一键部署脚本内容
