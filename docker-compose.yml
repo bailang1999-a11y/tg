@@ -1,7 +1,7 @@
 services:
   frontend:
     build:
-      context: .
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main"
       dockerfile: frontend/Dockerfile
     container_name: tg-frontend
     restart: unless-stopped
@@ -15,7 +15,7 @@ services:
 
   gateway:
     build:
-      context: ./backend
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
     container_name: tg-gateway
     restart: unless-stopped
     ulimits:
@@ -63,7 +63,7 @@ services:
 
   worker:
     build:
-      context: ./backend
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
     container_name: tg-worker
     restart: unless-stopped
     command: ["/app/worker"]
@@ -98,7 +98,7 @@ services:
 
   scheduler:
     build:
-      context: ./backend
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
     container_name: tg-scheduler
     restart: unless-stopped
     command: ["/app/scheduler"]
@@ -135,7 +135,6 @@ services:
         hard: 100000
     volumes:
       - tg_postgres:/var/lib/postgresql/data
-      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
     environment:
       POSTGRES_DB: "tg_marketing"
       POSTGRES_USER: "tg_marketing"

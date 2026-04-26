@@ -10,6 +10,8 @@ cd tg
 docker compose up -d --build
 ```
 
+如果你使用 1Panel 的「容器」->「编排」->「创建编排」，可以直接复制根目录 `docker-compose.yml` 内容粘贴进去。这个文件的构建上下文已经指向 GitHub 仓库，不依赖 1Panel 本地存在 `backend/` 或 `frontend/` 目录。
+
 默认访问地址：
 
 ```text

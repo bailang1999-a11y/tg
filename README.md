@@ -4,6 +4,8 @@
 
 不建议没基础的用户直接公网使用。以下是 `docker-compose.yml` 配置示例，仓库根目录已经内置同款配置。
 
+如果你在 1Panel 里创建编排，可以直接复制下面的 `docker-compose.yml` 内容粘贴进去。构建上下文已经指向 GitHub 仓库，不要求 1Panel 的编排目录里提前存在 `backend/` 或 `frontend/`。
+
 ### 1. 拉取项目
 
 ```bash
@@ -19,7 +21,7 @@ cd tg
 services:
   frontend:
     build:
-      context: .
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main"
       dockerfile: frontend/Dockerfile
     container_name: tg-frontend
     restart: unless-stopped
@@ -33,7 +35,7 @@ services:
 
   gateway:
     build:
-      context: ./backend
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
     container_name: tg-gateway
     restart: unless-stopped
     ulimits:
@@ -81,7 +83,7 @@ services:
 
   worker:
     build:
-      context: ./backend
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
     container_name: tg-worker
     restart: unless-stopped
     command: ["/app/worker"]
@@ -116,7 +118,7 @@ services:
 
   scheduler:
     build:
-      context: ./backend
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
     container_name: tg-scheduler
     restart: unless-stopped
     command: ["/app/scheduler"]
@@ -153,7 +155,6 @@ services:
         hard: 100000
     volumes:
       - tg_postgres:/var/lib/postgresql/data
-      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
     environment:
       POSTGRES_DB: "tg_marketing"
       POSTGRES_USER: "tg_marketing"
