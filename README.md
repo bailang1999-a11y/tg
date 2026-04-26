@@ -20,12 +20,11 @@ cd tg
 ```yaml
 services:
   frontend:
-    image: tg-frontend:1.0.4
     build:
       context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main"
       dockerfile: frontend/Dockerfile
       args:
-        APP_VERSION: "1.0.4"
+        APP_VERSION: "1.0.5"
     container_name: tg-frontend
     restart: unless-stopped
     ports:
@@ -38,11 +37,10 @@ services:
       - tg_marketing
 
   gateway:
-    image: tg-backend:1.0.4
     build:
       context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
       args:
-        APP_VERSION: "1.0.4"
+        APP_VERSION: "1.0.5"
     container_name: tg-gateway
     restart: unless-stopped
     ulimits:
@@ -53,7 +51,7 @@ services:
       - tg_storage:/app/storage
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      APP_VERSION: "1.0.4"
+      APP_VERSION: "1.0.5"
       APP_ENV: "production"
       APP_PORT: "8080"
       # 数据库连接配置；如果修改 postgres.POSTGRES_PASSWORD，这里的 password 也要同步修改
@@ -104,11 +102,10 @@ services:
       - tg_marketing
 
   worker:
-    image: tg-backend:1.0.4
     build:
       context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
       args:
-        APP_VERSION: "1.0.4"
+        APP_VERSION: "1.0.5"
     container_name: tg-worker
     restart: unless-stopped
     command: ["/app/worker"]
@@ -142,11 +139,10 @@ services:
       - tg_marketing
 
   scheduler:
-    image: tg-backend:1.0.4
     build:
       context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#main:backend"
       args:
-        APP_VERSION: "1.0.4"
+        APP_VERSION: "1.0.5"
     container_name: tg-scheduler
     restart: unless-stopped
     command: ["/app/scheduler"]

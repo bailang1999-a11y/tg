@@ -1,5 +1,18 @@
 # 更新日志
 
+## v1.0.5 - 2026-04-26
+
+### 修复
+
+- 移除 Compose 里的本地镜像名 `tg-backend:*` / `tg-frontend:*`，避免 1Panel 将它们当作远程镜像提前拉取并报 `pull access denied`。
+- 保留 `APP_VERSION` 构建参数作为缓存破坏因子，继续避免构建复用旧前端。
+
+### 验证
+
+- `npm run build` 通过。
+- `go test ./...` 通过。
+- `docker compose -f docker-compose.yml config` 通过。
+
 ## v1.0.4 - 2026-04-26
 
 ### 优化
