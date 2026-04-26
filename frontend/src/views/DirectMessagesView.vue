@@ -378,7 +378,7 @@ const cooldownJitterMinutes = ref(10)
 const focusedStepID = ref('')
 const messageSteps = ref<MessageStepDraft[]>([
   {
-    id: crypto.randomUUID(),
+    id: createDraftID(),
     type: 'text',
     content: '你好 {昵称}，刚看到你在 {来源群} 提到“{命中词}”，这块我可以帮你对接一下，方便聊聊吗？',
     mediaAssetID: '',
@@ -545,7 +545,7 @@ async function blacklistLead(lead: SCRMLead) {
 }
 
 function addStep() {
-  const id = crypto.randomUUID()
+  const id = createDraftID()
   messageSteps.value.push({
     id,
     type: 'text',
@@ -559,6 +559,11 @@ function addStep() {
     delayMinutes: 0
   })
   focusedStepID.value = id
+}
+
+function createDraftID() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  return `draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function removeStep(id: string) {
