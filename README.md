@@ -24,6 +24,7 @@ services:
     container_name: tg-frontend
     restart: unless-stopped
     ports:
+      # 修改左侧 8088 为你想对外访问的端口，例如 "80:80" 或 "18888:80"
       - "8088:80"
     depends_on:
       - gateway
@@ -44,16 +45,23 @@ services:
     environment:
       APP_ENV: "production"
       APP_PORT: "8080"
+      # 数据库连接配置；如果修改 postgres.POSTGRES_PASSWORD，这里的 password 也要同步修改
       DATABASE_DSN: "host=postgres user=tg_marketing password=tg_postgres_change_this_9f8a3f6b9f2d4c1a dbname=tg_marketing port=5432 sslmode=disable TimeZone=Asia/Shanghai"
       REDIS_ADDR: "redis:6379"
+      # Redis 密码；如果修改 redis 服务里的密码，这里也要同步修改
       REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
       REDIS_DB: "0"
       NATS_URL: "nats://nats:4222"
+      # JWT 密钥；公网部署前请改成至少 32 位随机字符串
       JWT_SECRET: "tg_jwt_change_this_to_a_long_random_value_3b17a62f1b4a4e88a0b2e1c7f9d6a5c4"
       AUTO_MIGRATE: "true"
+      # 后台初始管理员账号
       ADMIN_USERNAME: "admin"
+      # 后台初始管理员密码；公网部署前务必修改
       ADMIN_PASSWORD: "TG_Admin_Change_This_2026!"
+      # 后台管理员邮箱，可按需修改
       ADMIN_EMAIL: "admin@example.com"
+      # 前端访问域名白名单；部署到域名后改成你的域名，例如 "https://tg.example.com"
       CORS_ORIGINS: "http://localhost:8088,http://127.0.0.1:8088"
       DB_MAX_IDLE_CONNS: "10"
       DB_MAX_OPEN_CONNS: "40"
@@ -85,10 +93,13 @@ services:
       - tg_storage:/app/storage
     environment:
       APP_ENV: "production"
+      # 数据库连接配置；必须和 gateway、postgres 的数据库密码保持一致
       DATABASE_DSN: "host=postgres user=tg_marketing password=tg_postgres_change_this_9f8a3f6b9f2d4c1a dbname=tg_marketing port=5432 sslmode=disable TimeZone=Asia/Shanghai"
       REDIS_ADDR: "redis:6379"
+      # Redis 密码；必须和 gateway、redis 服务里的密码保持一致
       REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
       NATS_URL: "nats://nats:4222"
+      # JWT 密钥；必须和 gateway 保持一致
       JWT_SECRET: "tg_jwt_change_this_to_a_long_random_value_3b17a62f1b4a4e88a0b2e1c7f9d6a5c4"
       DB_MAX_IDLE_CONNS: "5"
       DB_MAX_OPEN_CONNS: "20"
@@ -113,9 +124,12 @@ services:
       - tg_storage:/app/storage
     environment:
       APP_ENV: "production"
+      # 数据库连接配置；必须和 gateway、postgres 的数据库密码保持一致
       DATABASE_DSN: "host=postgres user=tg_marketing password=tg_postgres_change_this_9f8a3f6b9f2d4c1a dbname=tg_marketing port=5432 sslmode=disable TimeZone=Asia/Shanghai"
       REDIS_ADDR: "redis:6379"
+      # Redis 密码；必须和 gateway、redis 服务里的密码保持一致
       REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+      # JWT 密钥；必须和 gateway 保持一致
       JWT_SECRET: "tg_jwt_change_this_to_a_long_random_value_3b17a62f1b4a4e88a0b2e1c7f9d6a5c4"
       DB_MAX_IDLE_CONNS: "2"
       DB_MAX_OPEN_CONNS: "5"
@@ -143,6 +157,7 @@ services:
     environment:
       POSTGRES_DB: "tg_marketing"
       POSTGRES_USER: "tg_marketing"
+      # PostgreSQL 数据库密码；修改后要同步修改 gateway/worker/scheduler 的 DATABASE_DSN
       POSTGRES_PASSWORD: "tg_postgres_change_this_9f8a3f6b9f2d4c1a"
       PGDATA: "/var/lib/postgresql/data"
       TZ: "Asia/Shanghai"
@@ -167,9 +182,12 @@ services:
     command:
       - sh
       - -c
+      # Redis 启动密码；修改后要同步修改 gateway/worker/scheduler 的 REDIS_PASSWORD
       - redis-server --appendonly yes --appendfsync everysec --requirepass "tg_redis_change_this_8b6a4e2f9c1d7a3b"
     environment:
+      # Redis 密码；修改后要同步修改上面的 requirepass 和其它服务的 REDIS_PASSWORD
       REDIS_PASSWORD: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
+      # redis-cli 使用的密码；保持和 REDIS_PASSWORD 一致
       REDISCLI_AUTH: "tg_redis_change_this_8b6a4e2f9c1d7a3b"
       TZ: "Asia/Shanghai"
     networks:
