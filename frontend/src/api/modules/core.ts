@@ -13,6 +13,8 @@ import type {
   ProxyImportSummary,
   SystemSettings,
   SystemSettingsHistoryItem,
+  SystemUpdateResult,
+  SystemVersion,
   Target,
   TargetMembership,
   TargetImportSummary,
@@ -144,6 +146,8 @@ export const coreApi = {
   systemSettingsHistory: () => request<SystemSettingsHistoryItem[]>('/api/v1/settings/history'),
   updateSystemSettings: (payload: Omit<SystemSettings, 'updated_at'>) =>
     request<SystemSettings>('/api/v1/settings', { method: 'PUT', body: JSON.stringify(payload) }),
+  systemVersion: () => request<SystemVersion>('/api/v1/system/version'),
+  startSystemUpdate: () => request<SystemUpdateResult>('/api/v1/system/update', { method: 'POST', body: JSON.stringify({}) }),
   createOutreachJob: (payload: OutreachJobRequest) =>
     request<Task>('/api/v1/outreach/jobs', { method: 'POST', body: JSON.stringify(payload) }),
   createMassMessagingJob: (payload: MassMessagingRequest) =>

@@ -117,6 +117,8 @@ func NewRouterWithTaskQueue(cfg config.Config, db *gorm.DB, auth *services.AuthS
 	protected.GET("/settings", s.GetSettings)
 	protected.GET("/settings/history", middleware.RequireAdmin(), s.GetSettingsHistory)
 	protected.PUT("/settings", middleware.RequireAdmin(), s.UpdateSettings)
+	protected.GET("/system/version", middleware.RequireAdmin(), s.GetSystemVersion)
+	protected.POST("/system/update", middleware.RequireAdmin(), s.StartSystemUpdate)
 
 	protected.GET("/bot/config", middleware.RequireAdmin(), s.GetBotConfig)
 	protected.PUT("/bot/config", middleware.RequireAdmin(), s.UpdateBotConfig)

@@ -44,7 +44,9 @@ services:
         hard: 100000
     volumes:
       - tg_storage:/app/storage
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      APP_VERSION: "1.0.2"
       APP_ENV: "production"
       APP_PORT: "8080"
       # 数据库连接配置；如果修改 postgres.POSTGRES_PASSWORD，这里的 password 也要同步修改
@@ -71,6 +73,11 @@ services:
       DB_CONN_MAX_IDLE_TIME_SECONDS: "300"
       HTTP_MAX_IN_FLIGHT: "2000"
       TASK_RUN_LOCK_STALE_SECONDS: "93600"
+      # 一键更新配置；依赖下面的 tg-updater 辅助容器
+      APP_UPDATE_ENABLED: "true"
+      APP_UPDATE_DOCKER_SOCKET: "/var/run/docker.sock"
+      APP_UPDATE_DOCKER_CONTAINER: "tg-updater"
+      APP_UPDATE_COMMAND: "cd /workspace && docker compose pull || true; docker compose up -d --build --remove-orphans"
     depends_on:
       postgres:
         condition: service_healthy
@@ -201,6 +208,17 @@ services:
     command: ["-js", "-sd", "/data"]
     volumes:
       - tg_nats:/data
+    networks:
+      - tg_marketing
+
+  updater:
+    image: docker:28-cli
+    container_name: tg-updater
+    restart: unless-stopped
+    command: ["sh", "-c", "sleep infinity"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace
     networks:
       - tg_marketing
 

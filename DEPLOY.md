@@ -27,8 +27,11 @@ http://服务器IP:36666
 - `postgres`
 - `redis`
 - `nats`
+- `updater`
 - 网络 `tg_marketing`
 - 数据卷 `tg_storage`、`tg_postgres`、`tg_redis`、`tg_nats`
+
+`updater` 是一键更新辅助容器。管理员登录后台后，可以在「系统设置」->「版本更新」里点击一键更新，系统会重新拉取 GitHub 最新代码并执行 Docker Compose 重建。
 
 公网生产环境上线前，请先编辑根目录 `docker-compose.yml`，替换里面带有 `change_this` / `Change_This` 的示例密码和密钥：
 

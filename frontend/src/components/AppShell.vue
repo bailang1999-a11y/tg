@@ -70,7 +70,9 @@
         </div>
       </header>
       <div class="app-content app-content-inner">
-        <RouterView />
+        <RouteErrorBoundary>
+          <RouterView />
+        </RouteErrorBoundary>
       </div>
     </main>
   </div>
@@ -81,6 +83,7 @@ import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/user'
 import GlassButton from './GlassButton.vue'
+import RouteErrorBoundary from './RouteErrorBoundary.vue'
 
 const store = useUserStore()
 const router = useRouter()

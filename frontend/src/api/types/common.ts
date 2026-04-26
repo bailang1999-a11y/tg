@@ -250,6 +250,22 @@ export type SystemSettingsHistoryItem = {
   created_at: string
 }
 
+export type SystemVersion = {
+  current_version: string
+  latest_version: string
+  latest_url: string
+  update_available: boolean
+  update_enabled: boolean
+}
+
+export type SystemUpdateResult = {
+  status: string
+  exec_id: string
+  message: string
+  command: string
+  container: string
+}
+
 export type OutreachJobRequest = {
   name: string
   job_type: 'keyword_reply' | 'member_invite' | 'bulk_message' | 'identity_sync' | 'content_cleanup'

@@ -41,6 +41,12 @@ type Config struct {
 	TelegramMessageScript       string
 	TelegramListenScript        string
 	TelegramApplyTimeoutSeconds int
+	AppVersion                  string
+	UpdateEnabled               bool
+	UpdateDockerSocket          string
+	UpdateDockerContainer       string
+	UpdateCommand               string
+	UpdateLatestReleaseURL      string
 }
 
 func (c Config) ValidateGateway() error {
@@ -98,6 +104,12 @@ func Load() Config {
 	setDefault("TELEGRAM_MESSAGE_SCRIPT", "./scripts/telegram_message_send.py")
 	setDefault("TELEGRAM_LISTEN_SCRIPT", "./scripts/telegram_keyword_listen.py")
 	setDefault("TELEGRAM_APPLY_TIMEOUT_SECONDS", 90)
+	setDefault("APP_VERSION", "1.0.2")
+	setDefault("APP_UPDATE_ENABLED", false)
+	setDefault("APP_UPDATE_DOCKER_SOCKET", "/var/run/docker.sock")
+	setDefault("APP_UPDATE_DOCKER_CONTAINER", "tg-updater")
+	setDefault("APP_UPDATE_COMMAND", "cd /workspace && docker compose pull || true; docker compose up -d --build --remove-orphans")
+	setDefault("APP_UPDATE_LATEST_RELEASE_URL", "https://api.github.com/repos/bailang1999-a11y/TG-Marketing-Assistant/releases/latest")
 
 	return Config{
 		AppEnv:                      viper.GetString("APP_ENV"),
@@ -132,6 +144,12 @@ func Load() Config {
 		TelegramMessageScript:       viper.GetString("TELEGRAM_MESSAGE_SCRIPT"),
 		TelegramListenScript:        viper.GetString("TELEGRAM_LISTEN_SCRIPT"),
 		TelegramApplyTimeoutSeconds: viper.GetInt("TELEGRAM_APPLY_TIMEOUT_SECONDS"),
+		AppVersion:                  viper.GetString("APP_VERSION"),
+		UpdateEnabled:               viper.GetBool("APP_UPDATE_ENABLED"),
+		UpdateDockerSocket:          viper.GetString("APP_UPDATE_DOCKER_SOCKET"),
+		UpdateDockerContainer:       viper.GetString("APP_UPDATE_DOCKER_CONTAINER"),
+		UpdateCommand:               viper.GetString("APP_UPDATE_COMMAND"),
+		UpdateLatestReleaseURL:      viper.GetString("APP_UPDATE_LATEST_RELEASE_URL"),
 	}
 }
 

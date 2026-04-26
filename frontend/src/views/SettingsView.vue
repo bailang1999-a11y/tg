@@ -238,6 +238,34 @@
         <GlassCard class="h-full">
           <div class="flex items-start justify-between gap-3">
             <div>
+              <div class="text-xs uppercase tracking-[0.16em] text-steel">Version</div>
+              <h2 class="mt-2 text-xl font-black">版本更新</h2>
+            </div>
+            <span class="status-pill" :data-tone="versionInfo?.update_available ? 'warning' : 'success'">
+              {{ versionInfo?.update_available ? '有新版本' : '已是最新' }}
+            </span>
+          </div>
+          <div class="mt-5 grid gap-3 text-sm">
+            <div class="metric-card app-card p-4" data-tone="info">
+              <div class="text-sm text-steel">当前版本</div>
+              <div class="mt-2 text-lg font-black">v{{ versionInfo?.current_version || '读取中' }}</div>
+            </div>
+            <div class="metric-card app-card p-4" :data-tone="versionInfo?.update_available ? 'warning' : 'success'">
+              <div class="text-sm text-steel">最新版本</div>
+              <div class="mt-2 text-lg font-black">v{{ versionInfo?.latest_version || '读取中' }}</div>
+              <a v-if="versionInfo?.latest_url" class="mt-2 inline-block text-sm text-neon hover:underline" :href="versionInfo.latest_url" target="_blank" rel="noreferrer">查看更新说明</a>
+            </div>
+            <GlassButton variant="secondary" :loading="versionLoading" @click="loadVersion">检查更新</GlassButton>
+            <GlassButton variant="primary" :loading="updating" :disabled="!versionInfo?.update_enabled" @click="startUpdate">一键更新</GlassButton>
+            <div class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm leading-6 text-steel">
+              {{ versionInfo?.update_enabled ? '点击后会在后台重新拉取 GitHub 最新代码并重建 Docker 编排，更新过程会短暂重启服务。' : '当前编排未启用一键更新，请先使用 v1.0.2 之后的 docker-compose.yml 重建一次。' }}
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard class="h-full">
+          <div class="flex items-start justify-between gap-3">
+            <div>
               <div class="text-xs uppercase tracking-[0.16em] text-steel">History</div>
               <h2 class="mt-2 text-xl font-black">最近策略变更</h2>
             </div>
@@ -325,7 +353,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { api, type SystemSettings, type SystemSettingsHistoryItem } from '../api/client'
+import { api, type SystemSettings, type SystemSettingsHistoryItem, type SystemVersion } from '../api/client'
 import GlassButton from '../components/GlassButton.vue'
 import GlassCard from '../components/GlassCard.vue'
 import { useUiStore } from '../stores/ui'
@@ -333,9 +361,12 @@ import { useUiStore } from '../stores/ui'
 const ui = useUiStore()
 const loading = ref(false)
 const saving = ref(false)
+const versionLoading = ref(false)
+const updating = ref(false)
 const updatedAt = ref('')
 const snapshot = ref('')
 const history = ref<SystemSettingsHistoryItem[]>([])
+const versionInfo = ref<SystemVersion | null>(null)
 const historyFilter = ref<'all' | 'risk_control'>('all')
 const historyRange = ref<'all' | '24h' | '7d'>('all')
 const historyActor = ref('all')
@@ -644,12 +675,14 @@ function formatHistoryValue(value: unknown) {
 async function load() {
   loading.value = true
   try {
-    const [settings, settingsHistory] = await Promise.all([
+    const [settings, settingsHistory, version] = await Promise.all([
       api.systemSettings(),
-      api.systemSettingsHistory()
+      api.systemSettingsHistory(),
+      api.systemVersion()
     ])
     applySettings(settings)
     history.value = settingsHistory
+    versionInfo.value = version
     updatedAt.value = settings.updated_at || ''
     snapshot.value = JSON.stringify(serializeSettings(form))
   } catch (err) {
@@ -660,6 +693,46 @@ async function load() {
     })
   } finally {
     loading.value = false
+  }
+}
+
+async function loadVersion() {
+  versionLoading.value = true
+  try {
+    versionInfo.value = await api.systemVersion()
+    ui.toast({
+      title: versionInfo.value.update_available ? '发现新版本' : '当前已是最新版本',
+      message: `当前 v${versionInfo.value.current_version}，最新 v${versionInfo.value.latest_version}`,
+      tone: versionInfo.value.update_available ? 'warning' : 'success'
+    })
+  } catch (err) {
+    ui.toast({
+      title: '版本检查失败',
+      message: err instanceof Error ? err.message : '请求失败',
+      tone: 'error'
+    })
+  } finally {
+    versionLoading.value = false
+  }
+}
+
+async function startUpdate() {
+  updating.value = true
+  try {
+    const result = await api.startSystemUpdate()
+    ui.toast({
+      title: '更新已启动',
+      message: result.message || '后台正在重建服务，请稍后刷新页面。',
+      tone: 'success'
+    })
+  } catch (err) {
+    ui.toast({
+      title: '启动更新失败',
+      message: err instanceof Error ? err.message : '请求失败',
+      tone: 'error'
+    })
+  } finally {
+    updating.value = false
   }
 }
 
