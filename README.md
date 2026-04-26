@@ -7,7 +7,7 @@
 ### 1. 拉取项目
 
 ```bash
-git clone https://github.com/bailang1999-a11y/tg.git
+git clone https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git
 cd tg
 ```
 
@@ -24,8 +24,8 @@ services:
     container_name: tg-frontend
     restart: unless-stopped
     ports:
-      # 修改左侧 8088 为你想对外访问的端口，例如 "80:80" 或 "18888:80"
-      - "8088:80"
+      # 修改左侧 28888 为你想对外访问的端口，例如 "80:80" 或 "18888:80"
+      - "28888:80"
     depends_on:
       - gateway
     networks:
@@ -62,7 +62,7 @@ services:
       # 后台管理员邮箱，可按需修改
       ADMIN_EMAIL: "admin@example.com"
       # 前端访问域名白名单；部署到域名后改成你的域名，例如 "https://tg.example.com"
-      CORS_ORIGINS: "http://localhost:8088,http://127.0.0.1:8088"
+      CORS_ORIGINS: "http://localhost:28888,http://127.0.0.1:28888"
       DB_MAX_IDLE_CONNS: "10"
       DB_MAX_OPEN_CONNS: "40"
       DB_CONN_MAX_LIFETIME_SECONDS: "1800"
@@ -223,7 +223,7 @@ docker compose up -d --build
 ### 4. 访问后台
 
 ```text
-http://服务器IP:8088
+http://服务器IP:28888
 ```
 
 默认管理员：

@@ -81,7 +81,7 @@ services:
       ADMIN_USERNAME: admin
       ADMIN_PASSWORD: admin123456
       ADMIN_EMAIL: admin@example.com
-      CORS_ORIGINS: http://localhost:5173,http://localhost:8088
+      CORS_ORIGINS: http://localhost:5173,http://localhost:28888
     ports:
       - "8080:8080"
     volumes:
@@ -141,7 +141,7 @@ services:
       context: ..
       dockerfile: frontend/Dockerfile
     ports:
-      - "8088:80"
+      - "28888:80"
     depends_on:
       gateway:
         condition: service_started
