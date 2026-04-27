@@ -1509,7 +1509,7 @@ function statusText(status: string) {
 function accountTone(item: ListenerAccount) {
   const text = `${item.status || ''} ${item.risk_status || ''}`.toLowerCase()
   if (text.includes('abnormal') || text.includes('failed') || text.includes('需重新') || text.includes('受限') || text.includes('检测失败')) return 'danger'
-  if (text.includes('offline')) return 'warning'
+  if (text.includes('offline')) return 'success'
   if (text.includes('normal') || text.includes('online') || item.risk_status === '正常') return 'success'
   return 'info'
 }
