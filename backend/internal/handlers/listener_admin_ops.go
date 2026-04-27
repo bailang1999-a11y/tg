@@ -614,7 +614,7 @@ func measureSOCKS5Proxy(item models.ListenerProxy) (int64, string) {
 		return 0, "failed"
 	}
 	start := time.Now()
-	conn, err := dialer.Dial("tcp", listenerProxyProbeTarget)
+	conn, err := proxyDialWithTimeout(dialer, "tcp", listenerProxyProbeTarget, 7*time.Second)
 	if err != nil {
 		if os.IsTimeout(err) {
 			return 0, "timeout"
@@ -759,21 +759,7 @@ func lookupListenerProxyExit(ctx context.Context, item models.ListenerProxy) pro
 		}
 		client.Transport = &http.Transport{
 			DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
-				type result struct {
-					conn net.Conn
-					err  error
-				}
-				ch := make(chan result, 1)
-				go func() {
-					conn, err := dialer.Dial(network, address)
-					ch <- result{conn: conn, err: err}
-				}()
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case res := <-ch:
-					return res.conn, res.err
-				}
+				return proxyDialWithContext(ctx, dialer, network, address)
 			},
 		}
 	case "http", "https":
@@ -813,6 +799,31 @@ func lookupListenerProxyExit(ctx context.Context, item models.ListenerProxy) pro
 		}
 	}
 	return proxyExitResult{}
+}
+
+type proxyDialResult struct {
+	conn net.Conn
+	err  error
+}
+
+func proxyDialWithTimeout(dialer proxy.Dialer, network string, address string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return proxyDialWithContext(ctx, dialer, network, address)
+}
+
+func proxyDialWithContext(ctx context.Context, dialer proxy.Dialer, network string, address string) (net.Conn, error) {
+	ch := make(chan proxyDialResult, 1)
+	go func() {
+		conn, err := dialer.Dial(network, address)
+		ch <- proxyDialResult{conn: conn, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		return res.conn, res.err
+	}
 }
 
 func parseProxyExitPayload(ctx context.Context, payload []byte) proxyExitResult {
