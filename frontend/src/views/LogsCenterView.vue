@@ -134,6 +134,7 @@ const taskTypeOptions = [
   { value: 'scrm_listener', label: '监听任务' },
   { value: 'bot_dm', label: 'Bot 私信任务' },
   { value: 'join_targets', label: '终端加入目标池' },
+  { value: 'listener_proxy_check', label: '监听代理检测' },
   { value: 'target_membership_refresh', label: '目标群状态刷新' }
 ]
 
@@ -322,6 +323,7 @@ function actionText(log: TaskLog) {
     import_accounts: '导入账号',
     import_targets: '导入目标',
     test_proxy_latency: '代理延迟检测',
+    proxy_check_start: '开始检测代理',
   }
   if (map[key]) return map[key]
   if (key.includes('_')) return `日志动作：${key.split('_').filter(Boolean).join('·')}`

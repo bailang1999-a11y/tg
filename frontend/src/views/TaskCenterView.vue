@@ -2,7 +2,7 @@
   <div class="page-shell">
     <PageToolbar
       title="运行中任务"
-      subtitle="这里只展示正在运行的任务，批量选择也仅允许选择运行中的任务。"
+      subtitle="展示正在运行、排队和等待执行的任务，长耗时操作会在这里持续更新进度。"
     >
       <template #actions>
         <span class="status-pill" :data-tone="riskPolicyTone">{{ riskPolicyPresetText }}</span>
@@ -25,7 +25,7 @@
         <label class="filter-field">
           <span>任务状态</span>
           <select v-model="filters.status" disabled>
-            <option value="running">仅运行中</option>
+            <option value="">运行中 / 排队中</option>
           </select>
         </label>
         <label class="filter-field">
@@ -180,7 +180,7 @@ const botUsers = ref<BotUserDashboardItem[]>([])
 const systemSettings = ref<SystemSettings | null>(null)
 const loading = ref(false)
 const refreshing = ref(false)
-const filters = reactive({ type: '', status: 'running', user_id: '', bot_user_id: '' })
+const filters = reactive({ type: '', status: '', user_id: '', bot_user_id: '' })
 const selectedTaskIDs = ref<string[]>([])
 const taskKeyword = ref('')
 const taskPage = ref(1)
@@ -237,14 +237,15 @@ const taskTypeOptions = [
   { value: 'scrm_listener', label: '监听任务' },
   { value: 'bot_dm', label: 'Bot 私信任务' },
   { value: 'join_targets', label: '终端加入目标池' },
+  { value: 'listener_proxy_check', label: '监听代理检测' },
   { value: 'target_membership_refresh', label: '目标群状态刷新' }
 ]
 
 async function load() {
   loading.value = true
   try {
-    filters.status = 'running'
-    tasks.value = (await api.tasks({ ...filters, status: 'running', limit: 500 })).filter(isRunningTask)
+    filters.status = ''
+    tasks.value = (await api.tasks({ ...filters, limit: 500 })).filter(isRunningTask)
     selectedTask.value = tasks.value.find((task) => task.id === selectedTask.value?.id) || tasks.value[0] || null
     selectedTaskIDs.value = selectedTaskIDs.value.filter((id) => tasks.value.some((task) => task.id === id && isRunningTask(task)))
   } catch (err) {
@@ -374,7 +375,7 @@ function statusTone(status: string) {
 }
 
 function isRunningTask(task: Task) {
-  return ['running', 'active'].includes(normalizeKeyword(task.status))
+  return ['running', 'active', 'queued', 'pending', 'retrying'].includes(normalizeKeyword(task.status))
 }
 
 function settingText(item: { label: string; value: string }) {

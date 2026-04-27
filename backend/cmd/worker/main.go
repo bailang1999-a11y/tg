@@ -58,6 +58,9 @@ func main() {
 		case "listener_join_targets":
 			server.RunListenerJoinTargetsTask(msg.TaskID)
 			return nil
+		case "listener_proxy_check":
+			server.RunListenerProxyCheckTask(msg.TaskID)
+			return nil
 		case "account_status_check":
 			server.RunCheckTerminalsTask(msg.TaskID)
 			return nil

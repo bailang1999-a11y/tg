@@ -108,6 +108,11 @@ func taskSettings(task models.Task) []taskSettingItem {
 		addSummary("failed", "失败")
 		addSummary("skipped", "跳过")
 		addSummary("top_skip_reason", "主要拦截原因")
+	case "listener_proxy_check":
+		addSummary("total", "代理总数")
+		addSummary("normal", "正常")
+		addSummary("failed", "失败")
+		addSummary("timeout", "超时")
 	case "import":
 		addSummary("success", "导入成功")
 		addSummary("duplicates", "重复")
@@ -184,6 +189,8 @@ func taskTypeText(value string) string {
 		return "终端加入目标池"
 	case "listener_join_targets":
 		return "监听号自动加群"
+	case "listener_proxy_check":
+		return "监听代理检测"
 	case "audit_action":
 		return "操作日志"
 	default:

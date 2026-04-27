@@ -49,6 +49,25 @@
       </div>
     </GlassCard>
 
+    <GlassCard v-if="activeProxyTask" class="membership-task-card">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-bold">监听代理延迟检测</h2>
+          <p class="mt-1 text-sm text-steel">{{ taskStatusText(activeProxyTask.status) }} · 更新 {{ formatDateTime(activeProxyTask.updated_at) }}</p>
+        </div>
+        <span class="status-pill" :data-tone="taskStatusTone(activeProxyTask.status)">{{ activeProxyTask.progress || 0 }}%</span>
+      </div>
+      <div class="progress-track mt-4">
+        <div class="progress-fill" :style="{ width: `${activeProxyTask.progress || 0}%` }"></div>
+      </div>
+      <div class="mt-4 grid gap-3 sm:grid-cols-4">
+        <div v-for="item in proxyTaskSummaryCards" :key="item.label" class="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <div class="text-xs text-steel">{{ item.label }}</div>
+          <div class="mt-1 text-lg font-black text-white">{{ item.value }}</div>
+        </div>
+      </div>
+    </GlassCard>
+
     <div class="grid gap-4 md:grid-cols-4">
       <GlassCard v-for="card in cards" :key="card.label" class="metric-card p-4" :data-tone="card.tone">
         <div class="text-sm text-steel">{{ card.label }}</div>
@@ -500,8 +519,10 @@ const selectedTargetIDs = ref<string[]>([])
 const selectedProxyIDs = ref<string[]>([])
 const activeMembershipTask = ref<Task | null>(null)
 const activeJoinTask = ref<Task | null>(null)
+const activeProxyTask = ref<Task | null>(null)
 let membershipTaskTimer: ReturnType<typeof window.setInterval> | null = null
 let joinTaskTimer: ReturnType<typeof window.setInterval> | null = null
+let proxyTaskTimer: ReturnType<typeof window.setInterval> | null = null
 const batchDeleteConcurrency = 8
 
 const cards = computed(() => [
@@ -526,6 +547,15 @@ const joinTaskSummaryCards = computed(() => {
     { label: '成功', value: numericSummary(summary, 'success') },
     { label: '失败', value: numericSummary(summary, 'failed') },
     { label: '跳过', value: numericSummary(summary, 'skipped') }
+  ]
+})
+const proxyTaskSummaryCards = computed(() => {
+  const summary = activeProxyTask.value?.summary || {}
+  return [
+    { label: '总数', value: numericSummary(summary, 'total') },
+    { label: '正常', value: numericSummary(summary, 'normal') },
+    { label: '失败', value: numericSummary(summary, 'failed') },
+    { label: '超时', value: numericSummary(summary, 'timeout') }
   ]
 })
 
@@ -962,6 +992,14 @@ function trackJoinTask(task: Task) {
   joinTaskTimer = window.setInterval(pollJoinTask, 2500)
 }
 
+function trackProxyTask(task: Task) {
+  activeProxyTask.value = task
+  checkingProxies.value = true
+  ui.trackTask({ id: task.id, title: '代理延迟检测', startedAt: Date.now() })
+  if (proxyTaskTimer) window.clearInterval(proxyTaskTimer)
+  proxyTaskTimer = window.setInterval(pollProxyTask, 2500)
+}
+
 async function pollMembershipTask() {
   const taskID = activeMembershipTask.value?.id
   if (!taskID) {
@@ -1028,18 +1066,69 @@ function stopJoinTaskPolling() {
   joiningTargets.value = false
 }
 
+async function pollProxyTask() {
+  const taskID = activeProxyTask.value?.id
+  if (!taskID) {
+    stopProxyTaskPolling()
+    return
+  }
+  try {
+    const tasks = await api.tasks({ type: 'listener_proxy_check', limit: 50 })
+    const next = tasks.find((task) => task.id === taskID)
+    if (next) activeProxyTask.value = next
+    if (next && isTaskFinished(next.status)) {
+      stopProxyTaskPolling()
+      await load()
+      if (ui.trackedTasks.some((task) => task.id === next.id)) {
+        ui.untrackTask(next.id)
+        ui.toast({
+          title: '代理延迟检测完成',
+          message: proxyTaskDoneMessage(next),
+          tone: next.status === 'failed' ? 'error' : next.status === 'partial_success' ? 'warning' : 'success',
+          duration: 7000
+        })
+      }
+    }
+  } catch (err) {
+    stopProxyTaskPolling()
+    error.value = err instanceof Error ? err.message : '读取代理检测进度失败'
+  }
+}
+
+function stopProxyTaskPolling() {
+  if (proxyTaskTimer) {
+    window.clearInterval(proxyTaskTimer)
+    proxyTaskTimer = null
+  }
+  checkingProxies.value = false
+}
+
 async function checkProxies() {
+  const accepted = await ui.confirm({
+    title: '开始检测代理延迟',
+    message: '检测会在后台任务中执行，过程会写入任务模块和日志中心。任务完成后无论你在哪个界面都会弹出提示。',
+    confirmText: '开始检测',
+    cancelText: '取消',
+    tone: 'info'
+  })
+  if (!accepted) return
   checkingProxies.value = true
   message.value = ''
   error.value = ''
   try {
-    const summary = await api.checkListenerProxies({ group_id: proxyFilterGroupID.value })
-    message.value = `代理延迟检测完成：总数 ${summary.total}，正常 ${summary.normal}，失败 ${summary.failed}，超时 ${summary.timeout}`
-    await load()
+    const result = await api.checkListenerProxies({ group_id: proxyFilterGroupID.value })
+    trackProxyTask(result.task)
+    message.value = `代理延迟检测任务已创建：共 ${result.summary.total} 个代理，正在后台运行。`
+    ui.toast({
+      title: '代理检测已启动',
+      message: `任务 ${result.task.id} 已进入任务模块，日志中心会实时记录每个代理的检测结果。`,
+      tone: 'success',
+      duration: 6200
+    })
   } catch (err) {
     error.value = err instanceof Error ? err.message : '检测代理延迟失败'
-  } finally {
     checkingProxies.value = false
+    ui.toast({ title: '代理检测启动失败', message: error.value, tone: 'error', duration: 5200 })
   }
 }
 
@@ -1247,6 +1336,11 @@ function joinTaskDoneMessage(task: Task) {
   return `成功 ${numericSummary(summary, 'success')}，失败 ${numericSummary(summary, 'failed')}，跳过 ${numericSummary(summary, 'skipped')}。`
 }
 
+function proxyTaskDoneMessage(task: Task) {
+  const summary = task.summary || {}
+  return `总数 ${numericSummary(summary, 'total')}，正常 ${numericSummary(summary, 'normal')}，失败 ${numericSummary(summary, 'failed')}，超时 ${numericSummary(summary, 'timeout')}。`
+}
+
 async function resumeMembershipTask() {
   try {
     const tasks = await api.tasks({ type: 'target_membership_refresh', limit: 50 })
@@ -1265,6 +1359,16 @@ async function resumeJoinTask() {
     const tasks = await api.tasks({ type: 'listener_join_targets', limit: 50 })
     const running = tasks.find((task) => !isTaskFinished(task.status))
     if (running) trackJoinTask(running)
+  } catch {
+    // 页面恢复任务失败不阻塞主列表加载。
+  }
+}
+
+async function resumeProxyTask() {
+  try {
+    const tasks = await api.tasks({ type: 'listener_proxy_check', limit: 50 })
+    const running = tasks.find((task) => !isTaskFinished(task.status))
+    if (running) trackProxyTask(running)
   } catch {
     // 页面恢复任务失败不阻塞主列表加载。
   }
@@ -1341,10 +1445,12 @@ onMounted(async () => {
   await load()
   await resumeMembershipTask()
   await resumeJoinTask()
+  await resumeProxyTask()
 })
 onUnmounted(() => {
   stopMembershipTaskPolling()
   stopJoinTaskPolling()
+  stopProxyTaskPolling()
 })
 </script>
 

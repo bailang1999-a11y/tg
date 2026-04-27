@@ -47,7 +47,7 @@ export const listenerApi = {
     request<{ task: Task }>('/api/v1/listener-admin/join-targets', { method: 'POST', body: JSON.stringify(payload) }),
   listenerProxies: (groupID = '') => request<ListenerProxy[]>(`/api/v1/listener-admin/proxies${groupID ? `?group_id=${groupID}` : ''}`),
   checkListenerProxies: (payload: { group_id?: string }) =>
-    request<ListenerProxyCheckSummary>('/api/v1/listener-admin/proxies/check', { method: 'POST', body: JSON.stringify(payload) }),
+    request<{ task: Task; summary: ListenerProxyCheckSummary }>('/api/v1/listener-admin/proxies/check', { method: 'POST', body: JSON.stringify(payload) }),
   importListenerProxies: (payload: {
     content: string
     default_protocol: string

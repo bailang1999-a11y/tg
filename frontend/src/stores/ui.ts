@@ -10,6 +10,12 @@ export type ToastItem = {
   duration: number
 }
 
+export type TrackedTask = {
+  id: string
+  title: string
+  startedAt: number
+}
+
 type ConfirmOptions = {
   title: string
   message: string
@@ -26,6 +32,7 @@ let toastSeed = 1
 export const useUiStore = defineStore('ui', {
   state: () => ({
     toasts: [] as ToastItem[],
+    trackedTasks: [] as TrackedTask[],
     confirmState: null as ConfirmState | null
   }),
   actions: {
@@ -55,6 +62,16 @@ export const useUiStore = defineStore('ui', {
     },
     dismissToast(id: number) {
       this.toasts = this.toasts.filter((item) => item.id !== id)
+    },
+    trackTask(task: TrackedTask) {
+      if (!task.id) return
+      this.trackedTasks = [
+        ...this.trackedTasks.filter((item) => item.id !== task.id),
+        task
+      ]
+    },
+    untrackTask(id: string) {
+      this.trackedTasks = this.trackedTasks.filter((item) => item.id !== id)
     },
     confirm(options: ConfirmOptions) {
       if (confirmResolver) {

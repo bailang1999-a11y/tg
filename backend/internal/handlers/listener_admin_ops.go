@@ -401,9 +401,10 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 	tenantID := s.tenantID(c)
+	payload := listenerProxyCheckPayload{GroupID: strings.TrimSpace(req.GroupID)}
 	query := s.db.WithContext(c.Request.Context()).Where("tenant_id = ?", tenantID).Order("created_at desc")
-	if strings.TrimSpace(req.GroupID) != "" {
-		groupID, err := uuid.Parse(strings.TrimSpace(req.GroupID))
+	if payload.GroupID != "" {
+		groupID, err := uuid.Parse(payload.GroupID)
 		if err != nil {
 			utils.Fail(c, http.StatusBadRequest, "代理分组无效")
 			return
@@ -415,10 +416,80 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 		utils.Fail(c, http.StatusInternalServerError, "读取监听代理失败")
 		return
 	}
+
+	payloadBytes, _ := json.Marshal(payload)
+	task := models.Task{
+		ID:        uuid.New(),
+		TenantID:  tenantID,
+		Name:      "监听代理延迟检测",
+		Type:      "listener_proxy_check",
+		Status:    "queued",
+		Progress:  0,
+		Payload:   datatypes.JSON(payloadBytes),
+		CreatedBy: s.userIDPtr(c),
+	}
+	if err := s.db.WithContext(c.Request.Context()).Create(&task).Error; err != nil {
+		utils.Fail(c, http.StatusInternalServerError, "创建代理检测任务失败")
+		return
+	}
+	_ = s.createTaskLog(c.Request.Context(), task, "INFO", "created", fmt.Sprintf("代理延迟检测任务已创建：待检测 %d 个代理", len(proxies)), "", "")
+	if !s.enqueueTask(c.Request.Context(), task, "run") {
+		go s.RunListenerProxyCheckTask(task.ID)
+	}
+	utils.Created(c, gin.H{"task": task, "summary": listenerProxyCheckSummary{Total: len(proxies)}})
+}
+
+type listenerProxyCheckPayload struct {
+	GroupID string `json:"group_id,omitempty"`
+}
+
+func (s *Server) RunListenerProxyCheckTask(taskID uuid.UUID) {
+	ctx := context.Background()
+	claimed, release := s.claimTaskRun(ctx, taskID, "listener_proxy_check")
+	if !claimed {
+		return
+	}
+	defer release()
+
+	var task models.Task
+	if err := s.db.WithContext(ctx).Where("id = ? AND type = ?", taskID, "listener_proxy_check").First(&task).Error; err != nil {
+		return
+	}
+	var payload listenerProxyCheckPayload
+	if len(task.Payload) > 0 {
+		_ = json.Unmarshal(task.Payload, &payload)
+	}
+	s.runListenerProxyCheckTask(ctx, task, payload)
+}
+
+func (s *Server) runListenerProxyCheckTask(ctx context.Context, task models.Task, payload listenerProxyCheckPayload) {
+	query := s.db.WithContext(ctx).Where("tenant_id = ?", task.TenantID).Order("created_at desc")
+	if strings.TrimSpace(payload.GroupID) != "" {
+		groupID, err := uuid.Parse(strings.TrimSpace(payload.GroupID))
+		if err != nil {
+			s.finishListenerProxyCheckTask(ctx, task, "failed", listenerProxyCheckSummary{}, "代理分组无效："+err.Error())
+			return
+		}
+		query = query.Where("group_id = ?", groupID)
+	}
+	var proxies []models.ListenerProxy
+	if err := query.Find(&proxies).Error; err != nil {
+		s.finishListenerProxyCheckTask(ctx, task, "failed", listenerProxyCheckSummary{}, "读取监听代理失败："+err.Error())
+		return
+	}
 	summary := listenerProxyCheckSummary{Total: len(proxies)}
-	for _, item := range proxies {
+	s.updateTaskState(ctx, task.ID, "running", 1, nil)
+	s.logTaskBackground(ctx, task, "INFO", "start", fmt.Sprintf("开始检测监听代理延迟：共 %d 个代理", len(proxies)))
+	if len(proxies) == 0 {
+		s.finishListenerProxyCheckTask(ctx, task, "success", summary, "没有需要检测的代理")
+		return
+	}
+	for index, item := range proxies {
+		startedAt := time.Now()
+		address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+		s.logTaskBackground(ctx, task, "INFO", "proxy_check_start", fmt.Sprintf("开始检测代理 %d/%d：%s %s", index+1, len(proxies), strings.ToUpper(item.Protocol), address))
 		latency, status := measureListenerProxy(item)
-		exit := lookupListenerProxyExit(c.Request.Context(), item)
+		exit := lookupListenerProxyExit(ctx, item)
 		exitIP := exit.IP
 		country := exit.Country
 		flag := exit.Flag
@@ -434,7 +505,7 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 		default:
 			summary.Failed++
 		}
-		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", tenantID, item.ID).Updates(map[string]any{
+		if err := s.db.WithContext(ctx).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", task.TenantID, item.ID).Updates(map[string]any{
 			"latency_ms": latency,
 			"status":     status,
 			"exit_ip":    exitIP,
@@ -442,11 +513,61 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 			"flag":       flag,
 			"updated_at": time.Now(),
 		}).Error; err != nil {
-			utils.Fail(c, http.StatusInternalServerError, "更新代理延迟失败")
+			summary.Failed++
+			s.finishListenerProxyCheckTask(ctx, task, "failed", summary, "更新代理延迟失败："+err.Error())
 			return
 		}
+		detail := listenerProxyCheckLogDetail(item, status, latency, exitIP, country)
+		level := "INFO"
+		if status == "timeout" {
+			level = "WARN"
+		} else if status != "normal" {
+			level = "ERROR"
+		}
+		_ = s.createTaskLogWithDuration(ctx, task, level, "test_proxy_latency", detail, address, firstNonEmpty(exitIP, country), time.Since(startedAt).Milliseconds())
+		progress := 1 + int(float64(index+1)/float64(len(proxies))*94)
+		if progress > 95 {
+			progress = 95
+		}
+		s.updateTaskState(ctx, task.ID, "running", progress, nil)
 	}
-	utils.OK(c, summary)
+	status := "success"
+	if summary.Failed > 0 || summary.Timeout > 0 {
+		status = "partial_success"
+	}
+	detail := fmt.Sprintf("代理延迟检测完成：总数 %d，正常 %d，失败 %d，超时 %d", summary.Total, summary.Normal, summary.Failed, summary.Timeout)
+	s.finishListenerProxyCheckTask(ctx, task, status, summary, detail)
+}
+
+func (s *Server) finishListenerProxyCheckTask(ctx context.Context, task models.Task, status string, summary listenerProxyCheckSummary, detail string) {
+	payload, _ := json.Marshal(summary)
+	s.updateTaskState(ctx, task.ID, status, 100, datatypes.JSON(payload))
+	level := "INFO"
+	if status == "failed" {
+		level = "ERROR"
+	} else if status == "partial_success" {
+		level = "WARN"
+	}
+	_ = s.createTaskLog(ctx, task, level, "summary", detail, "", "")
+}
+
+func listenerProxyCheckLogDetail(item models.ListenerProxy, status string, latency int64, exitIP string, country string) string {
+	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+	switch status {
+	case "normal":
+		exitText := "真实出口 IP 待检测"
+		if strings.TrimSpace(exitIP) != "" {
+			exitText = fmt.Sprintf("真实出口 IP %s", strings.TrimSpace(exitIP))
+			if strings.TrimSpace(country) != "" && strings.TrimSpace(country) != "未知" {
+				exitText += "，位置 " + strings.TrimSpace(country)
+			}
+		}
+		return fmt.Sprintf("%s %s 检测正常，延迟 %d ms，%s", strings.ToUpper(item.Protocol), address, latency, exitText)
+	case "timeout":
+		return fmt.Sprintf("%s %s 检测超时，请检查代理是否可连、端口是否开放或账号密码是否正确", strings.ToUpper(item.Protocol), address)
+	default:
+		return fmt.Sprintf("%s %s 检测失败，请检查代理协议、端口、用户名和密码", strings.ToUpper(item.Protocol), address)
+	}
 }
 
 type proxyGeoResponse struct {
