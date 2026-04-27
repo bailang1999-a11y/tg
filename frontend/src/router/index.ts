@@ -15,6 +15,7 @@ import LogsCenterView from '../views/LogsCenterView.vue'
 import OutreachSyncView from '../views/OutreachSyncView.vue'
 import DirectMessagesView from '../views/DirectMessagesView.vue'
 import SettingsView from '../views/SettingsView.vue'
+import SystemUpdateView from '../views/SystemUpdateView.vue'
 import BotSettingsView from '../views/BotSettingsView.vue'
 import BotUsersDashboardView from '../views/BotUsersDashboardView.vue'
 import ListenerAdminView from '../views/ListenerAdminView.vue'
@@ -43,6 +44,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'bot-settings', component: BotSettingsView, meta: { requiresAdmin: true } },
       { path: 'bot-users', component: BotUsersDashboardView, meta: { requiresAdmin: true } },
       { path: 'listener-admin', component: ListenerAdminView, meta: { requiresAdmin: true } },
+      { path: 'updates', component: SystemUpdateView, meta: { requiresAdmin: true } },
       { path: 'settings', component: SettingsView, meta: { requiresAdmin: true } }
     ]
   }

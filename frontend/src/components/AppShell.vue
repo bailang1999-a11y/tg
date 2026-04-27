@@ -104,6 +104,7 @@ const nav = [
   { label: 'Bot 用户看板', path: '/bot-users', icon: '☻', admin: true },
   { label: '监听矩阵', path: '/listener-admin', icon: '⟡', admin: true },
   { label: '用户管理', path: '/users', icon: '♟', admin: true },
+  { label: '版本更新', path: '/updates', icon: '↻', admin: true },
   { label: '系统设置', path: '/settings', icon: '⚙', admin: true }
 ]
 
