@@ -489,13 +489,19 @@ func (s *Server) runListenerProxyCheckTask(ctx context.Context, task models.Task
 		address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
 		s.logTaskBackground(ctx, task, "INFO", "proxy_check_start", fmt.Sprintf("开始检测代理 %d/%d：%s %s", index+1, len(proxies), strings.ToUpper(item.Protocol), address))
 		latency, status := measureListenerProxy(item)
-		exit := lookupListenerProxyExit(ctx, item)
-		exitIP := exit.IP
-		country := exit.Country
-		flag := exit.Flag
-		if country == "" {
-			country = firstNonEmpty(item.Country, "未知")
-			flag = item.Flag
+		exitIP := ""
+		country := firstNonEmpty(item.Country, "未知")
+		flag := item.Flag
+		if status == "normal" {
+			s.logTaskBackground(ctx, task, "INFO", "proxy_exit_lookup", fmt.Sprintf("代理 %d/%d 连通性正常，开始查询真实出口 IP：%s", index+1, len(proxies), address))
+			exit := lookupListenerProxyExit(ctx, item)
+			exitIP = exit.IP
+			if exit.Country != "" {
+				country = exit.Country
+			}
+			if exit.Flag != "" {
+				flag = exit.Flag
+			}
 		}
 		switch status {
 		case "normal":
@@ -742,7 +748,9 @@ func (s *Server) lookupListenerAccountProxyExit(ctx context.Context, tenantID uu
 }
 
 func lookupListenerProxyExit(ctx context.Context, item models.ListenerProxy) proxyExitResult {
-	client := &http.Client{Timeout: 10 * time.Second}
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, 8*time.Second)
+	defer cancelLookup()
+	client := &http.Client{Timeout: 5 * time.Second}
 	switch strings.ToLower(strings.TrimSpace(item.Protocol)) {
 	case "socks5", "sk5":
 		dialer, err := listenerSOCKS5Dialer(item)
@@ -779,7 +787,10 @@ func lookupListenerProxyExit(ctx context.Context, item models.ListenerProxy) pro
 	}
 
 	for _, lookupURL := range listenerProxyExitLookupURLs {
-		reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if lookupCtx.Err() != nil {
+			return proxyExitResult{}
+		}
+		reqCtx, cancel := context.WithTimeout(lookupCtx, 5*time.Second)
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, lookupURL, nil)
 		if err != nil {
 			cancel()
