@@ -104,11 +104,11 @@ func Load() Config {
 	setDefault("TELEGRAM_MESSAGE_SCRIPT", "./scripts/telegram_message_send.py")
 	setDefault("TELEGRAM_LISTEN_SCRIPT", "./scripts/telegram_keyword_listen.py")
 	setDefault("TELEGRAM_APPLY_TIMEOUT_SECONDS", 90)
-	setDefault("APP_VERSION", "1.0.13")
+	setDefault("APP_VERSION", "1.0.14")
 	setDefault("APP_UPDATE_ENABLED", false)
 	setDefault("APP_UPDATE_DOCKER_SOCKET", "/var/run/docker.sock")
 	setDefault("APP_UPDATE_DOCKER_CONTAINER", "tg-updater")
-	setDefault("APP_UPDATE_COMMAND", "cd /workspace && docker compose pull || true; docker compose up -d --build --remove-orphans")
+	setDefault("APP_UPDATE_COMMAND", "cd /workspace && docker compose pull || true; docker compose up -d --build --remove-orphans frontend gateway worker scheduler postgres redis nats")
 	setDefault("APP_UPDATE_LATEST_RELEASE_URL", "https://api.github.com/repos/bailang1999-a11y/TG-Marketing-Assistant/releases/latest")
 
 	return Config{
