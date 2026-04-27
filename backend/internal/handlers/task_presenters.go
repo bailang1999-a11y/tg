@@ -116,7 +116,7 @@ func taskSettings(task models.Task) []taskSettingItem {
 	case "listener_account_check":
 		addSummary("total", "监听号总数")
 		addSummary("normal", "正常")
-		addSummary("offline", "离线")
+		addSummary("offline", "会话有效")
 		addSummary("abnormal", "异常")
 	case "import":
 		addSummary("success", "导入成功")

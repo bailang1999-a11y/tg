@@ -643,7 +643,7 @@ const accountTaskSummaryCards = computed(() => {
   return [
     { label: '总数', value: numericSummary(summary, 'total') },
     { label: '正常', value: numericSummary(summary, 'normal') },
-    { label: '离线', value: numericSummary(summary, 'offline') },
+    { label: '会话有效', value: numericSummary(summary, 'offline') },
     { label: '异常', value: numericSummary(summary, 'abnormal') }
   ]
 })
@@ -1502,7 +1502,7 @@ async function deleteCurrentProxyGroup() {
 }
 
 function statusText(status: string) {
-  const map: Record<string, string> = { normal: '正常', online: '正常', offline: '离线', unchecked: '未检测', abnormal: '异常', unknown: '未知' }
+  const map: Record<string, string> = { normal: '正常', online: '正常', offline: '会话有效', unchecked: '未检测', abnormal: '异常', unknown: '未知' }
   return map[status] || status || '-'
 }
 
@@ -1613,7 +1613,7 @@ function membershipTaskDoneMessage(task: Task) {
 
 function accountTaskDoneMessage(task: Task) {
   const summary = task.summary || {}
-  return `总数 ${numericSummary(summary, 'total')}，正常 ${numericSummary(summary, 'normal')}，离线 ${numericSummary(summary, 'offline')}，异常 ${numericSummary(summary, 'abnormal')}。`
+  return `总数 ${numericSummary(summary, 'total')}，正常 ${numericSummary(summary, 'normal')}，会话有效 ${numericSummary(summary, 'offline')}，异常 ${numericSummary(summary, 'abnormal')}。`
 }
 
 function joinTaskDoneMessage(task: Task) {

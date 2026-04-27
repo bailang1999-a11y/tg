@@ -191,7 +191,7 @@ func listenerAccountStatusText(status, riskStatus string) string {
 	case "normal", "online":
 		return "正常"
 	case "offline":
-		return "离线"
+		return "会话有效"
 	case "abnormal", "failed":
 		return "异常"
 	case "unchecked", "":
