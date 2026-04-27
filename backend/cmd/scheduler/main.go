@@ -50,6 +50,7 @@ func main() {
 	runMaintenance(ctx, cfg, db)
 	lastMaintenanceAt := time.Now()
 	runScheduledListenerAccountChecks(ctx, db, publisher)
+	runScheduledListenerProxyChecks(ctx, db, publisher)
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	log.Printf("scheduler started: maintenance_interval=%s", interval)
@@ -74,6 +75,7 @@ func main() {
 				lastMaintenanceAt = time.Now()
 			}
 			runScheduledListenerAccountChecks(ctx, db, publisher)
+			runScheduledListenerProxyChecks(ctx, db, publisher)
 		}
 	}
 }
@@ -105,6 +107,8 @@ type scheduledSystemSettings struct {
 	ListenerHealth struct {
 		AutoAccountCheckEnabled     bool `json:"auto_account_check_enabled"`
 		AccountCheckIntervalMinutes int  `json:"account_check_interval_minutes"`
+		AutoProxyCheckEnabled       bool `json:"auto_proxy_check_enabled"`
+		ProxyCheckIntervalMinutes   int  `json:"proxy_check_interval_minutes"`
 	} `json:"listener_health"`
 }
 
@@ -195,8 +199,96 @@ func runScheduledListenerAccountChecks(ctx context.Context, db *gorm.DB, publish
 	log.Printf("scheduled listener account check queued task id=%s interval=%dm", task.ID, intervalMinutes)
 }
 
+func runScheduledListenerProxyChecks(ctx context.Context, db *gorm.DB, publisher *taskqueue.Publisher) {
+	if publisher == nil {
+		return
+	}
+	if !tryAcquireNamedSchedulerLock(ctx, db, scheduledListenerProxyCheckLockKey) {
+		return
+	}
+	defer releaseNamedSchedulerLock(context.Background(), db, scheduledListenerProxyCheckLockKey)
+
+	var setting models.SystemSetting
+	if err := db.WithContext(ctx).Order("created_at asc").First(&setting).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			log.Printf("scheduled listener proxy check read settings failed: %v", err)
+		}
+		return
+	}
+	var settings scheduledSystemSettings
+	if err := json.Unmarshal(setting.Payload, &settings); err != nil {
+		log.Printf("scheduled listener proxy check parse settings failed: %v", err)
+		return
+	}
+	if settings.ListenerHealth.ProxyCheckIntervalMinutes == 0 {
+		settings.ListenerHealth.AutoProxyCheckEnabled = true
+		settings.ListenerHealth.ProxyCheckIntervalMinutes = 60
+	}
+	if !settings.ListenerHealth.AutoProxyCheckEnabled {
+		return
+	}
+	intervalMinutes := settings.ListenerHealth.ProxyCheckIntervalMinutes
+	if intervalMinutes <= 0 {
+		intervalMinutes = 60
+	}
+	if intervalMinutes < 5 {
+		intervalMinutes = 5
+	}
+	cutoff := time.Now().Add(-time.Duration(intervalMinutes) * time.Minute)
+	var recent int64
+	if err := db.WithContext(ctx).Model(&models.Task{}).
+		Where("tenant_id = ? AND type = ? AND created_at >= ?", setting.TenantID, "listener_proxy_check", cutoff).
+		Where("status IN ?", []string{"queued", "running", "success", "partial_success", "failed"}).
+		Count(&recent).Error; err != nil {
+		log.Printf("scheduled listener proxy check recent task lookup failed: %v", err)
+		return
+	}
+	if recent > 0 {
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]string{"source": "scheduled"})
+	task := models.Task{
+		ID:       uuid.New(),
+		TenantID: setting.TenantID,
+		Name:     "监听代理定时延迟检测",
+		Type:     "listener_proxy_check",
+		Status:   "queued",
+		Progress: 0,
+		Payload:  datatypes.JSON(payload),
+	}
+	if err := db.WithContext(ctx).Create(&task).Error; err != nil {
+		log.Printf("scheduled listener proxy check create task failed: %v", err)
+		return
+	}
+	logTask := models.TaskLog{
+		ID:        uuid.New(),
+		TenantID:  task.TenantID,
+		TaskID:    task.ID,
+		Level:     "INFO",
+		Category:  "task",
+		Action:    "scheduled",
+		Details:   "监听代理定时延迟检测任务已创建",
+		TraceID:   uuid.NewString(),
+		CreatedAt: time.Now(),
+	}
+	_ = db.WithContext(ctx).Create(&logTask).Error
+	if err := publisher.PublishTask(ctx, taskqueue.TaskMessage{
+		TaskID:    task.ID,
+		TenantID:  task.TenantID,
+		Type:      task.Type,
+		Action:    "run",
+		CreatedAt: time.Now(),
+	}); err != nil {
+		log.Printf("scheduled listener proxy check publish task failed: %v", err)
+		return
+	}
+	log.Printf("scheduled listener proxy check queued task id=%s interval=%dm", task.ID, intervalMinutes)
+}
+
 const schedulerLockKey int64 = 20260425
 const scheduledListenerAccountCheckLockKey int64 = 20260426
+const scheduledListenerProxyCheckLockKey int64 = 20260427
 
 func tryAcquireSchedulerLock(ctx context.Context, db *gorm.DB) bool {
 	return tryAcquireNamedSchedulerLock(ctx, db, schedulerLockKey)

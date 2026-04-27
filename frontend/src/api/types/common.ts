@@ -219,6 +219,8 @@ export type SystemSettings = {
   listener_health: {
     auto_account_check_enabled: boolean
     account_check_interval_minutes: number
+    auto_proxy_check_enabled: boolean
+    proxy_check_interval_minutes: number
     silence_alert_minutes: number
   }
   audit: {

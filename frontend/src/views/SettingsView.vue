@@ -77,10 +77,10 @@
           <div class="mb-4 flex items-center justify-between gap-3">
             <div>
               <div class="text-xs uppercase tracking-[0.16em] text-steel">Listener Health</div>
-              <h2 class="mt-2 text-xl font-black">监听健康检测</h2>
+              <h2 class="mt-2 text-xl font-black">监听与代理健康检测</h2>
             </div>
-            <span class="status-pill" :data-tone="form.listener_health.auto_account_check_enabled ? 'success' : 'warning'">
-              {{ form.listener_health.auto_account_check_enabled ? '定时检测开启' : '手动检测' }}
+            <span class="status-pill" :data-tone="listenerHealthAutoEnabled ? 'success' : 'warning'">
+              {{ listenerHealthAutoEnabled ? '定时检测开启' : '手动检测' }}
             </span>
           </div>
           <div class="space-y-3">
@@ -91,10 +91,21 @@
               </div>
               <input v-model="form.listener_health.auto_account_check_enabled" type="checkbox" class="h-5 w-5" />
             </label>
+            <label class="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div>
+                <div class="font-semibold">自动刷新代理列表延迟</div>
+                <div class="mt-1 text-sm text-steel">后台按设定周期创建“监听代理延迟检测”任务，自动更新出口 IP、连通性和延迟</div>
+              </div>
+              <input v-model="form.listener_health.auto_proxy_check_enabled" type="checkbox" class="h-5 w-5" />
+            </label>
             <div class="grid gap-4 md:grid-cols-2">
               <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div class="text-sm text-steel">账号状态检测周期（分钟）</div>
                 <input v-model.number="form.listener_health.account_check_interval_minutes" type="number" min="5" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              </label>
+              <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div class="text-sm text-steel">代理列表检测周期（分钟）</div>
+                <input v-model.number="form.listener_health.proxy_check_interval_minutes" type="number" min="5" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
               </label>
               <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div class="text-sm text-steel">无消息提醒阈值（分钟）</div>
@@ -404,6 +415,7 @@ const historyActor = ref('all')
 const form = reactive(createDefaultSettings())
 
 const dirty = computed(() => JSON.stringify(serializeSettings(form)) !== snapshot.value)
+const listenerHealthAutoEnabled = computed(() => form.listener_health.auto_account_check_enabled || form.listener_health.auto_proxy_check_enabled)
 
 const summaryItems = computed(() => [
   {
@@ -432,9 +444,9 @@ const summaryItems = computed(() => [
   },
   {
     label: '监听健康',
-    value: form.listener_health.auto_account_check_enabled ? `${form.listener_health.account_check_interval_minutes} 分钟检测` : '仅手动检测',
-    help: `无消息 ${form.listener_health.silence_alert_minutes} 分钟后提示`,
-    tone: form.listener_health.auto_account_check_enabled ? 'success' : 'warning'
+    value: listenerHealthAutoEnabled.value ? `账号 ${form.listener_health.account_check_interval_minutes} 分钟 / 代理 ${form.listener_health.proxy_check_interval_minutes} 分钟` : '仅手动检测',
+    help: `账号检测${form.listener_health.auto_account_check_enabled ? '开启' : '关闭'}，代理检测${form.listener_health.auto_proxy_check_enabled ? '开启' : '关闭'}；无消息 ${form.listener_health.silence_alert_minutes} 分钟后提示`,
+    tone: listenerHealthAutoEnabled.value ? 'success' : 'warning'
   },
   {
     label: '风控避让',
@@ -474,6 +486,8 @@ const historyFieldLabels: Record<string, string> = {
   join_jitter_minutes: '加群随机浮动',
   auto_account_check_enabled: '自动检测监听账号',
   account_check_interval_minutes: '账号检测周期分钟',
+  auto_proxy_check_enabled: '自动检测代理列表',
+  proxy_check_interval_minutes: '代理检测周期分钟',
   silence_alert_minutes: '无消息提醒分钟'
 }
 
@@ -589,6 +603,8 @@ function createDefaultSettings(): Omit<SystemSettings, 'updated_at'> {
     listener_health: {
       auto_account_check_enabled: true,
       account_check_interval_minutes: 60,
+      auto_proxy_check_enabled: true,
+      proxy_check_interval_minutes: 60,
       silence_alert_minutes: 15
     },
     audit: {
@@ -636,6 +652,8 @@ function applySettings(settings: SystemSettings) {
   form.frequency.dashboard_refresh_second = settings.frequency.dashboard_refresh_second
   form.listener_health.auto_account_check_enabled = settings.listener_health?.auto_account_check_enabled ?? true
   form.listener_health.account_check_interval_minutes = settings.listener_health?.account_check_interval_minutes ?? 60
+  form.listener_health.auto_proxy_check_enabled = settings.listener_health?.auto_proxy_check_enabled ?? true
+  form.listener_health.proxy_check_interval_minutes = settings.listener_health?.proxy_check_interval_minutes ?? 60
   form.listener_health.silence_alert_minutes = settings.listener_health?.silence_alert_minutes ?? 15
   form.audit.log_retention_days = settings.audit.log_retention_days
   form.audit.realtime_log_stream = settings.audit.realtime_log_stream

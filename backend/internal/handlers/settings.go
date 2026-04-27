@@ -32,6 +32,8 @@ type systemFrequencySettings struct {
 type systemListenerHealthSettings struct {
 	AutoAccountCheckEnabled     bool `json:"auto_account_check_enabled"`
 	AccountCheckIntervalMinutes int  `json:"account_check_interval_minutes"`
+	AutoProxyCheckEnabled       bool `json:"auto_proxy_check_enabled"`
+	ProxyCheckIntervalMinutes   int  `json:"proxy_check_interval_minutes"`
 	SilenceAlertMinutes         int  `json:"silence_alert_minutes"`
 }
 
@@ -104,6 +106,8 @@ func defaultSystemSettings() systemSettingsPayload {
 		ListenerHealth: systemListenerHealthSettings{
 			AutoAccountCheckEnabled:     true,
 			AccountCheckIntervalMinutes: 60,
+			AutoProxyCheckEnabled:       true,
+			ProxyCheckIntervalMinutes:   60,
 			SilenceAlertMinutes:         15,
 		},
 		Audit: systemAuditSettings{
@@ -133,8 +137,12 @@ func defaultSystemSettings() systemSettingsPayload {
 func normalizeSystemSettings(input systemSettingsPayload) systemSettingsPayload {
 	defaults := defaultSystemSettings()
 	listenerHealth := input.ListenerHealth
-	if listenerHealth.AccountCheckIntervalMinutes == 0 && listenerHealth.SilenceAlertMinutes == 0 && !listenerHealth.AutoAccountCheckEnabled {
+	if listenerHealth.AccountCheckIntervalMinutes == 0 && listenerHealth.ProxyCheckIntervalMinutes == 0 && listenerHealth.SilenceAlertMinutes == 0 && !listenerHealth.AutoAccountCheckEnabled && !listenerHealth.AutoProxyCheckEnabled {
 		listenerHealth = defaults.ListenerHealth
+	}
+	if listenerHealth.ProxyCheckIntervalMinutes == 0 && !listenerHealth.AutoProxyCheckEnabled {
+		listenerHealth.AutoProxyCheckEnabled = defaults.ListenerHealth.AutoProxyCheckEnabled
+		listenerHealth.ProxyCheckIntervalMinutes = defaults.ListenerHealth.ProxyCheckIntervalMinutes
 	}
 
 	return systemSettingsPayload{
@@ -152,6 +160,8 @@ func normalizeSystemSettings(input systemSettingsPayload) systemSettingsPayload 
 		ListenerHealth: systemListenerHealthSettings{
 			AutoAccountCheckEnabled:     listenerHealth.AutoAccountCheckEnabled,
 			AccountCheckIntervalMinutes: clampSettingsInt(listenerHealth.AccountCheckIntervalMinutes, 5, 24*60, defaults.ListenerHealth.AccountCheckIntervalMinutes),
+			AutoProxyCheckEnabled:       listenerHealth.AutoProxyCheckEnabled,
+			ProxyCheckIntervalMinutes:   clampSettingsInt(listenerHealth.ProxyCheckIntervalMinutes, 5, 24*60, defaults.ListenerHealth.ProxyCheckIntervalMinutes),
 			SilenceAlertMinutes:         clampSettingsInt(listenerHealth.SilenceAlertMinutes, 1, 24*60, defaults.ListenerHealth.SilenceAlertMinutes),
 		},
 		Audit: systemAuditSettings{
@@ -386,6 +396,10 @@ func buildListenerHealthChangeSummary(before systemListenerHealthSettings, after
 		return "开启监听账号定时检测"
 	case before.AutoAccountCheckEnabled && !after.AutoAccountCheckEnabled:
 		return "关闭监听账号定时检测"
+	case !before.AutoProxyCheckEnabled && after.AutoProxyCheckEnabled:
+		return "开启代理列表定时检测"
+	case before.AutoProxyCheckEnabled && !after.AutoProxyCheckEnabled:
+		return "关闭代理列表定时检测"
 	default:
 		return "更新监听健康检测策略"
 	}
