@@ -48,7 +48,7 @@ func (p *Publisher) PublishTask(ctx context.Context, msg TaskMessage) error {
 	if p == nil || p.client == nil || p.client.JS == nil {
 		return fmt.Errorf("task queue unavailable")
 	}
-	if msg.TaskID == uuid.Nil || msg.TenantID == uuid.Nil || msg.Type == "" {
+	if msg.TaskID == uuid.Nil || msg.Type == "" {
 		return fmt.Errorf("invalid task message")
 	}
 	if msg.Action == "" {
