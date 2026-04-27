@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"bufio"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -15,9 +18,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/net/proxy"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
+
+const listenerProxyProbeTarget = "www.gstatic.com:80"
 
 func (s *Server) ImportListenerTargets(c *gin.Context) {
 	var req struct {
@@ -387,8 +393,13 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 		return
 	}
 	summary := listenerProxyCheckSummary{Total: len(proxies)}
-	for _, proxy := range proxies {
-		latency, status := measureProxyEndpoint(proxy.IP, proxy.Port)
+	for _, item := range proxies {
+		latency, status := measureListenerProxy(item)
+		country, flag := lookupProxyCountry(c.Request.Context(), item.IP)
+		if country == "" {
+			country = firstNonEmpty(item.Country, "未知")
+			flag = item.Flag
+		}
 		switch status {
 		case "normal":
 			summary.Normal++
@@ -397,9 +408,11 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 		default:
 			summary.Failed++
 		}
-		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", tenantID, proxy.ID).Updates(map[string]any{
+		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", tenantID, item.ID).Updates(map[string]any{
 			"latency_ms": latency,
 			"status":     status,
+			"country":    country,
+			"flag":       flag,
 			"updated_at": time.Now(),
 		}).Error; err != nil {
 			utils.Fail(c, http.StatusInternalServerError, "更新代理延迟失败")
@@ -407,6 +420,102 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 		}
 	}
 	utils.OK(c, summary)
+}
+
+type proxyGeoResponse struct {
+	Status      string `json:"status"`
+	Country     string `json:"country"`
+	CountryCode string `json:"countryCode"`
+}
+
+func measureListenerProxy(item models.ListenerProxy) (int64, string) {
+	protocol := strings.ToLower(strings.TrimSpace(item.Protocol))
+	switch protocol {
+	case "socks5", "sk5":
+		return measureSOCKS5Proxy(item)
+	case "http", "https":
+		return measureHTTPProxy(item)
+	default:
+		return measureProxyEndpoint(item.IP, item.Port)
+	}
+}
+
+func measureSOCKS5Proxy(item models.ListenerProxy) (int64, string) {
+	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+	baseDialer := &net.Dialer{Timeout: 5 * time.Second}
+	var auth *proxy.Auth
+	if strings.TrimSpace(item.Username) != "" || strings.TrimSpace(item.Password) != "" {
+		auth = &proxy.Auth{User: item.Username, Password: item.Password}
+	}
+	dialer, err := proxy.SOCKS5("tcp", address, auth, baseDialer)
+	if err != nil {
+		return 0, "failed"
+	}
+	start := time.Now()
+	conn, err := dialer.Dial("tcp", listenerProxyProbeTarget)
+	if err != nil {
+		if os.IsTimeout(err) {
+			return 0, "timeout"
+		}
+		return 0, "failed"
+	}
+	_ = conn.Close()
+	elapsed := time.Since(start).Milliseconds()
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+	return elapsed, "normal"
+}
+
+func measureHTTPProxy(item models.ListenerProxy) (int64, string) {
+	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		if os.IsTimeout(err) {
+			return 0, "timeout"
+		}
+		return 0, "failed"
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err := writeHTTPProxyProbe(conn, item); err != nil {
+		return 0, "failed"
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		if os.IsTimeout(err) {
+			return 0, "timeout"
+		}
+		return 0, "failed"
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, "failed"
+	}
+	elapsed := time.Since(start).Milliseconds()
+	if elapsed <= 0 {
+		elapsed = 1
+	}
+	return elapsed, "normal"
+}
+
+func writeHTTPProxyProbe(conn net.Conn, item models.ListenerProxy) error {
+	var builder strings.Builder
+	builder.WriteString("CONNECT ")
+	builder.WriteString(listenerProxyProbeTarget)
+	builder.WriteString(" HTTP/1.1\r\nHost: ")
+	builder.WriteString(listenerProxyProbeTarget)
+	builder.WriteString("\r\nProxy-Connection: close\r\n")
+	if strings.TrimSpace(item.Username) != "" || strings.TrimSpace(item.Password) != "" {
+		token := base64.StdEncoding.EncodeToString([]byte(item.Username + ":" + item.Password))
+		builder.WriteString("Proxy-Authorization: Basic ")
+		builder.WriteString(token)
+		builder.WriteString("\r\n")
+	}
+	builder.WriteString("\r\n")
+	_, err := conn.Write([]byte(builder.String()))
+	return err
 }
 
 func measureProxyEndpoint(ip string, port int) (int64, string) {
@@ -425,6 +534,48 @@ func measureProxyEndpoint(ip string, port int) (int64, string) {
 		elapsed = 1
 	}
 	return elapsed, "normal"
+}
+
+func lookupProxyCountry(ctx context.Context, ip string) (string, string) {
+	ip = strings.TrimSpace(ip)
+	if ip == "" || net.ParseIP(ip) == nil {
+		return "", ""
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	url := "http://ip-api.com/json/" + ip + "?fields=status,country,countryCode"
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", ""
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", ""
+	}
+	var geo proxyGeoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&geo); err != nil {
+		return "", ""
+	}
+	if !strings.EqualFold(geo.Status, "success") || strings.TrimSpace(geo.Country) == "" {
+		return "", ""
+	}
+	return strings.TrimSpace(geo.Country), countryFlagEmoji(geo.CountryCode)
+}
+
+func countryFlagEmoji(code string) string {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if len(code) != 2 {
+		return ""
+	}
+	runes := []rune(code)
+	if runes[0] < 'A' || runes[0] > 'Z' || runes[1] < 'A' || runes[1] > 'Z' {
+		return ""
+	}
+	return string([]rune{0x1F1E6 + runes[0] - 'A', 0x1F1E6 + runes[1] - 'A'})
 }
 
 func (s *Server) RefreshListenerTargets(c *gin.Context) {
@@ -575,9 +726,15 @@ func (s *Server) AssignListenerProxies(c *gin.Context) {
 }
 
 func (s *Server) assignListenerProxies(c *gin.Context, proxyGroupID *uuid.UUID, accountGroupText string) (listenerAdminAssignSummary, error) {
+	return s.assignListenerProxiesToAccounts(c, proxyGroupID, accountGroupText, nil, false)
+}
+
+func (s *Server) assignListenerProxiesToAccounts(c *gin.Context, proxyGroupID *uuid.UUID, accountGroupText string, accountIDs []uuid.UUID, onlyUnassigned bool) (listenerAdminAssignSummary, error) {
 	tenantID := s.tenantID(c)
 	var proxies []models.ListenerProxy
-	query := s.db.WithContext(c.Request.Context()).Where("tenant_id = ?", tenantID).Order("bound_accounts asc, created_at asc")
+	query := s.db.WithContext(c.Request.Context()).
+		Where("tenant_id = ? AND status NOT IN ?", tenantID, []string{"failed", "timeout"}).
+		Order("bound_accounts asc, created_at asc")
 	if proxyGroupID != nil {
 		query = query.Where("group_id = ?", *proxyGroupID)
 	}
@@ -589,6 +746,12 @@ func (s *Server) assignListenerProxies(c *gin.Context, proxyGroupID *uuid.UUID, 
 	}
 	var accounts []models.ListenerAccount
 	aq := s.db.WithContext(c.Request.Context()).Where("tenant_id = ?", tenantID).Order("created_at asc")
+	if len(accountIDs) > 0 {
+		aq = aq.Where("id IN ?", accountIDs)
+	}
+	if onlyUnassigned {
+		aq = aq.Where("proxy_id IS NULL")
+	}
 	if accountGroupText != "" {
 		groupID, err := uuid.Parse(accountGroupText)
 		if err != nil {

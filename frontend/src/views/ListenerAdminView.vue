@@ -353,8 +353,18 @@
                 <td>{{ item.port }}</td>
                 <td>{{ item.protocol_display || item.protocol }}</td>
                 <td>{{ item.username || '-' }}</td>
-                <td>{{ item.latency_ms ? `${item.latency_ms} ms` : '未检测' }}</td>
-                <td>{{ item.location_display || `${item.country || '未知'} ${item.flag || ''}` }}</td>
+                <td>
+                  <span class="latency-badge" :data-tone="proxyLatencyTone(item)">
+                    <i>{{ proxyLatencyIcon(item) }}</i>
+                    {{ proxyLatencyText(item) }}
+                  </span>
+                </td>
+                <td>
+                  <span class="country-badge">
+                    <i>{{ item.flag || '◇' }}</i>
+                    {{ proxyCountryText(item) }}
+                  </span>
+                </td>
                 <td>
                   <div class="proxy-bind">
                     <span>{{ item.bound_display || `${Math.min(item.bound_accounts || 0, 3)}/3` }}</span>
@@ -797,6 +807,12 @@ async function confirmPendingImport() {
         ? await api.importListenerAccountFiles({ files: pendingImport.value.files, ...groupPayload })
         : await api.importListenerAccounts({ content: pendingImport.value.content, ...groupPayload })
       message.value = `监听号导入完成：成功 ${result.success}，重复 ${result.duplicate}，失败 ${result.failed}`
+      if (result.assignment) {
+        assignment.value = result.assignment
+        message.value += `；自动分配代理 ${result.assignment.assigned} 个`
+      } else if (result.assignment_error) {
+        message.value += `；自动分配代理失败：${result.assignment_error}`
+      }
       showImportToast('监听号', result.success, result.duplicate, result.failed)
     } else if (pendingImport.value.kind === 'target') {
       const result = await api.importListenerTargets({ content: pendingImport.value.content, ...groupPayload })
@@ -1254,6 +1270,37 @@ function boundedNumber(value: number, min: number, max: number, fallback: number
   return Math.min(max, Math.max(min, Math.trunc(next)))
 }
 
+function proxyLatencyTone(item: ListenerProxy) {
+  const status = (item.status || '').toLowerCase()
+  const latency = Number(item.latency_ms || 0)
+  if (status === 'failed' || status === 'timeout') return 'bad'
+  if (!latency) return 'unknown'
+  if (latency <= 300) return 'good'
+  if (latency <= 1000) return 'warn'
+  return 'bad'
+}
+
+function proxyLatencyIcon(item: ListenerProxy) {
+  const tone = proxyLatencyTone(item)
+  if (tone === 'good') return '●'
+  if (tone === 'warn') return '▲'
+  if (tone === 'bad') return '×'
+  return '○'
+}
+
+function proxyLatencyText(item: ListenerProxy) {
+  const status = (item.status || '').toLowerCase()
+  if (status === 'timeout') return '超时'
+  if (status === 'failed') return '失败'
+  return item.latency_ms ? `${item.latency_ms} ms` : '未检测'
+}
+
+function proxyCountryText(item: ListenerProxy) {
+  const country = (item.country || '').trim()
+  if (!country || country === '未知') return '未知国家'
+  return country
+}
+
 function formatDateTime(value?: string) {
   if (!value) return '-'
   const date = new Date(value)
@@ -1419,6 +1466,44 @@ onUnmounted(() => {
 .proxy-bind { position: relative; overflow: hidden; height: 28px; min-width: 90px; border-radius: 8px; border: 1px solid rgba(255,255,255,.08); background: rgba(255,255,255,.06); }
 .proxy-bind i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(135deg, rgba(34,197,94,.8), rgba(34,211,238,.8)); }
 .proxy-bind span { position: relative; z-index: 1; display: grid; height: 100%; place-items: center; font-weight: 800; }
+.latency-badge,
+.country-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border-radius: 8px;
+  padding: 0 10px;
+  border: 1px solid rgba(255,255,255,.1);
+  background: rgba(255,255,255,.06);
+  font-weight: 800;
+  white-space: nowrap;
+}
+.latency-badge i,
+.country-badge i {
+  font-style: normal;
+}
+.latency-badge[data-tone='good'] {
+  color: #86efac;
+  border-color: rgba(34,197,94,.32);
+  background: rgba(34,197,94,.12);
+}
+.latency-badge[data-tone='warn'] {
+  color: #fcd34d;
+  border-color: rgba(245,158,11,.35);
+  background: rgba(245,158,11,.12);
+}
+.latency-badge[data-tone='bad'] {
+  color: #fda4af;
+  border-color: rgba(244,63,94,.35);
+  background: rgba(244,63,94,.12);
+}
+.latency-badge[data-tone='unknown'] {
+  color: var(--app-text-muted);
+}
+.country-badge {
+  color: #dbeafe;
+}
 .empty-cell { text-align: center; color: var(--app-text-muted); padding: 30px !important; }
 @media (max-width: 1280px) { .listener-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 900px) {

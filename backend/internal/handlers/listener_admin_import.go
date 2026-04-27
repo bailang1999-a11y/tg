@@ -81,6 +81,7 @@ func (s *Server) importListenerAccountLines(c *gin.Context, lines []string, grou
 			if err := tx.WithContext(c.Request.Context()).Create(&item).Error; err != nil {
 				return err
 			}
+			summary.CreatedIDs = append(summary.CreatedIDs, item.ID)
 			summary.Success++
 			summary.Items = append(summary.Items, listenerImportResult{Line: line, Identifier: firstNonEmpty(phone, nickname), Status: "success"})
 		}
@@ -89,6 +90,7 @@ func (s *Server) importListenerAccountLines(c *gin.Context, lines []string, grou
 	if err != nil {
 		return summary, err
 	}
+	s.autoAssignImportedListenerAccounts(c, &summary)
 	return summary, nil
 }
 
@@ -150,6 +152,7 @@ func (s *Server) importListenerAccountUnits(c *gin.Context, units []importUnit, 
 			if err := tx.WithContext(c.Request.Context()).Create(&item).Error; err != nil {
 				return err
 			}
+			summary.CreatedIDs = append(summary.CreatedIDs, item.ID)
 			summary.Success++
 			summary.Items = append(summary.Items, listenerImportResult{Line: unit.Name, Identifier: normalizedPhone, Status: "success"})
 		}
@@ -158,7 +161,20 @@ func (s *Server) importListenerAccountUnits(c *gin.Context, units []importUnit, 
 	if err != nil {
 		return summary, err
 	}
+	s.autoAssignImportedListenerAccounts(c, &summary)
 	return summary, nil
+}
+
+func (s *Server) autoAssignImportedListenerAccounts(c *gin.Context, summary *listenerImportSummary) {
+	if summary == nil || len(summary.CreatedIDs) == 0 {
+		return
+	}
+	assign, err := s.assignListenerProxiesToAccounts(c, nil, "", summary.CreatedIDs, true)
+	if err != nil {
+		summary.AssignmentError = err.Error()
+		return
+	}
+	summary.Assignment = &assign
 }
 
 func listenerAccountPhoneFromUnitName(name string) string {

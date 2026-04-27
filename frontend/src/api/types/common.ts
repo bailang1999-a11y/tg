@@ -343,6 +343,13 @@ export type TargetImportSummary = {
   failed: number
   duplicate: number
   skipped: number
+  assignment?: {
+    accounts: number
+    proxies: number
+    assigned: number
+    skipped: number
+  }
+  assignment_error?: string
   group_id?: string
   group_name?: string
   items: Array<{

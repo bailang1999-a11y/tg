@@ -17,13 +17,16 @@ type listenerAdminSummary struct {
 }
 
 type listenerImportSummary struct {
-	Success   int                    `json:"success"`
-	Failed    int                    `json:"failed"`
-	Duplicate int                    `json:"duplicate"`
-	Skipped   int                    `json:"skipped"`
-	GroupID   *uuid.UUID             `json:"group_id,omitempty"`
-	GroupName string                 `json:"group_name,omitempty"`
-	Items     []listenerImportResult `json:"items"`
+	Success         int                         `json:"success"`
+	Failed          int                         `json:"failed"`
+	Duplicate       int                         `json:"duplicate"`
+	Skipped         int                         `json:"skipped"`
+	GroupID         *uuid.UUID                  `json:"group_id,omitempty"`
+	GroupName       string                      `json:"group_name,omitempty"`
+	Assignment      *listenerAdminAssignSummary `json:"assignment,omitempty"`
+	AssignmentError string                      `json:"assignment_error,omitempty"`
+	Items           []listenerImportResult      `json:"items"`
+	CreatedIDs      []uuid.UUID                 `json:"-"`
 }
 
 type listenerImportResult struct {
