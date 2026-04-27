@@ -166,6 +166,8 @@ func taskTypeText(value string) string {
 		return "账号检测"
 	case "network_test":
 		return "代理检测"
+	case "import_proxies":
+		return "导入代理"
 	case "profile_modify":
 		return "资料修改"
 	case "mass_messaging":
@@ -180,6 +182,8 @@ func taskTypeText(value string) string {
 		return "Bot 配置修改"
 	case "join_targets":
 		return "终端加入目标池"
+	case "audit_action":
+		return "操作日志"
 	default:
 		return firstNonEmpty(value, "未分类")
 	}
@@ -328,6 +332,14 @@ func taskLogActionText(value string) string {
 		return "会话副本准备"
 	case "start_worker":
 		return "启动监听进程"
+	case "audit_create":
+		return "操作提交"
+	case "audit_update":
+		return "操作修改"
+	case "audit_delete":
+		return "操作删除"
+	case "audit_action":
+		return "后台操作"
 	case "stdout":
 		return "标准输出"
 	case "stderr":

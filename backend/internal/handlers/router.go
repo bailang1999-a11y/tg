@@ -63,6 +63,7 @@ func NewRouterWithTaskQueue(cfg config.Config, db *gorm.DB, auth *services.AuthS
 
 	protected := api.Group("")
 	protected.Use(middleware.Auth(auth))
+	protected.Use(s.auditActionLogs())
 	protected.GET("/me", s.Me)
 	protected.GET("/dashboard", s.Dashboard)
 	protected.GET("/ws/logs", s.LogStream)

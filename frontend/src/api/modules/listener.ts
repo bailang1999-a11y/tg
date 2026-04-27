@@ -51,7 +51,7 @@ export const listenerApi = {
     new_group_name?: string
     account_group_id?: string
     assign_to_accounts?: boolean
-  }) => request<{ import: ProxyImportSummary; assignment: ListenerProxyAssignment }>('/api/v1/listener-admin/proxies/import', { method: 'POST', body: JSON.stringify(payload) }),
+  }) => request<{ import: ProxyImportSummary; assignment: ListenerProxyAssignment; assignment_error?: string }>('/api/v1/listener-admin/proxies/import', { method: 'POST', body: JSON.stringify(payload) }),
   assignListenerProxies: (payload: { proxy_group_id: string; account_group_id?: string }) =>
     request<ListenerProxyAssignment>('/api/v1/listener-admin/proxies/assign', { method: 'POST', body: JSON.stringify(payload) }),
   deleteListenerProxy: (id: string) =>

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -88,8 +90,16 @@ func (s *Server) ImportListenerProxies(c *gin.Context) {
 	if defaultProtocol == "" {
 		defaultProtocol = "socks5"
 	}
+	lines := importNonEmptyLines(req.Content)
+	task := s.createListenerProxyImportTask(c, len(lines), defaultProtocol, req.AssignToAccounts)
+	if task != nil {
+		_ = s.createTaskLog(c.Request.Context(), *task, "INFO", "created", fmt.Sprintf("开始导入监听代理：%d 行，默认协议 %s", len(lines), defaultProtocol), "", "")
+	}
 	groupID, groupName, err := s.resolveListenerGroup(c, "listener_proxy", strings.TrimSpace(req.GroupID), firstNonEmpty(strings.TrimSpace(req.NewGroupName), "监听代理"))
 	if err != nil {
+		if task != nil {
+			s.finishListenerProxyImportTask(c, *task, "failed", 100, fmt.Sprintf("导入失败：%s", err.Error()))
+		}
 		utils.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -99,16 +109,14 @@ func (s *Server) ImportListenerProxies(c *gin.Context) {
 		if err != nil {
 			return err
 		}
-		for _, raw := range strings.Split(req.Content, "\n") {
-			line := strings.TrimSpace(raw)
-			if line == "" {
-				summary.Skipped++
-				continue
-			}
+		for index, line := range lines {
 			proxy, err := parseProxyLine(line, defaultProtocol)
 			if err != nil {
 				summary.Failed++
 				summary.Items = append(summary.Items, listenerImportResult{Line: line, Status: "failed", Reason: err.Error()})
+				if task != nil {
+					_ = s.createTaskLog(c.Request.Context(), *task, "ERROR", "import_proxies", fmt.Sprintf("第 %d 行导入失败：%s", index+1, err.Error()), "", "")
+				}
 				continue
 			}
 			var existing int64
@@ -119,6 +127,9 @@ func (s *Server) ImportListenerProxies(c *gin.Context) {
 			if existing > 0 {
 				summary.Duplicate++
 				summary.Items = append(summary.Items, listenerImportResult{Line: line, Identifier: address, Status: "duplicate", Reason: "监听代理已存在"})
+				if task != nil {
+					_ = s.createTaskLog(c.Request.Context(), *task, "WARN", "import_proxies", fmt.Sprintf("第 %d 行重复：%s 已存在", index+1, address), "", "")
+				}
 				continue
 			}
 			item := models.ListenerProxy{ID: uuid.New(), TenantID: s.tenantID(c), GroupID: groupID, Code: fmt.Sprintf("LP-%06d", nextCode), IP: proxy.IP, Port: proxy.Port, Protocol: proxy.Protocol, Username: proxy.Username, Password: proxy.Password, Country: "未知", Status: "untested"}
@@ -128,22 +139,95 @@ func (s *Server) ImportListenerProxies(c *gin.Context) {
 			nextCode++
 			summary.Success++
 			summary.Items = append(summary.Items, listenerImportResult{Line: line, Identifier: address, Status: "success"})
+			if task != nil {
+				_ = s.createTaskLog(c.Request.Context(), *task, "INFO", "import_proxies", fmt.Sprintf("第 %d 行导入成功：%s %s", index+1, proxy.Protocol, address), "", "")
+			}
 		}
 		return nil
 	})
 	if err != nil {
+		if task != nil {
+			s.finishListenerProxyImportTask(c, *task, "failed", 100, "导入监听代理失败："+err.Error())
+		}
 		utils.Fail(c, http.StatusInternalServerError, "导入监听代理失败")
 		return
 	}
 	var assign listenerAdminAssignSummary
+	assignmentError := ""
 	if req.AssignToAccounts {
 		assign, err = s.assignListenerProxies(c, groupID, strings.TrimSpace(req.AccountGroupID))
 		if err != nil {
-			utils.Fail(c, http.StatusBadRequest, err.Error())
-			return
+			assignmentError = err.Error()
+			if task != nil {
+				_ = s.createTaskLog(c.Request.Context(), *task, "WARN", "import_proxies", "代理已导入，但自动分配失败："+assignmentError, "", "")
+			}
+		} else if task != nil {
+			_ = s.createTaskLog(c.Request.Context(), *task, "INFO", "import_proxies", fmt.Sprintf("自动分配完成：成功 %d，跳过 %d", assign.Assigned, assign.Skipped), "", "")
 		}
 	}
-	utils.Created(c, gin.H{"import": summary, "assignment": assign})
+	status := listenerProxyImportTaskStatus(summary, assignmentError)
+	detail := fmt.Sprintf("监听代理导入完成：成功 %d，重复 %d，失败 %d，跳过 %d", summary.Success, summary.Duplicate, summary.Failed, summary.Skipped)
+	if assignmentError != "" {
+		detail += "；自动分配失败：" + assignmentError
+	}
+	if task != nil {
+		s.finishListenerProxyImportTask(c, *task, status, 100, detail)
+	}
+	utils.Created(c, gin.H{"import": summary, "assignment": assign, "assignment_error": assignmentError})
+}
+
+func importNonEmptyLines(content string) []string {
+	lines := []string{}
+	for _, raw := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(raw)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func (s *Server) createListenerProxyImportTask(c *gin.Context, lineCount int, defaultProtocol string, assignToAccounts bool) *models.Task {
+	payload, _ := json.Marshal(gin.H{
+		"line_count":         lineCount,
+		"default_protocol":   defaultProtocol,
+		"assign_to_accounts": assignToAccounts,
+	})
+	task := models.Task{
+		ID:        uuid.New(),
+		TenantID:  s.tenantID(c),
+		Name:      "导入代理",
+		Type:      "import_proxies",
+		Status:    "running",
+		Progress:  10,
+		Payload:   datatypes.JSON(payload),
+		CreatedBy: s.userIDPtr(c),
+	}
+	if err := s.db.WithContext(c.Request.Context()).Create(&task).Error; err != nil {
+		return nil
+	}
+	return &task
+}
+
+func listenerProxyImportTaskStatus(summary listenerImportSummary, assignmentError string) string {
+	if summary.Success == 0 && (summary.Failed > 0 || assignmentError != "") {
+		return "failed"
+	}
+	if summary.Failed > 0 || summary.Duplicate > 0 || assignmentError != "" {
+		return "partial_success"
+	}
+	return "success"
+}
+
+func (s *Server) finishListenerProxyImportTask(c *gin.Context, task models.Task, status string, progress int, detail string) {
+	s.updateTaskState(c.Request.Context(), task.ID, status, progress, nil)
+	level := "INFO"
+	if status == "failed" {
+		level = "ERROR"
+	} else if status == "partial_success" {
+		level = "WARN"
+	}
+	_ = s.createTaskLog(c.Request.Context(), task, level, "summary", detail, "", "")
 }
 
 func (s *Server) CheckListenerAccounts(c *gin.Context) {

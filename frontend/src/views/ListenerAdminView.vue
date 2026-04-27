@@ -742,8 +742,11 @@ async function confirmPendingImport() {
       })
       assignment.value = result.assignment
       message.value = `监听代理导入完成：成功 ${result.import.success}，重复 ${result.import.duplicate}，失败 ${result.import.failed}`
+      if (result.assignment_error) {
+        message.value += `；自动分配失败：${result.assignment_error}`
+      }
       proxyTextContent.value = ''
-      showImportToast('监听代理', result.import.success, result.import.duplicate, result.import.failed)
+      showImportToast('监听代理', result.import.success, result.import.duplicate, result.import.failed, result.assignment_error)
     }
     pendingImport.value = null
     await load()
@@ -755,11 +758,11 @@ async function confirmPendingImport() {
   }
 }
 
-function showImportToast(label: string, success: number, duplicate: number, failed: number) {
+function showImportToast(label: string, success: number, duplicate: number, failed: number, warning = '') {
   ui.toast({
     title: `${label}导入完成`,
-    message: `成功 ${success}，重复 ${duplicate}，失败 ${failed}，实际导入 ${success}`,
-    tone: failed > 0 ? 'warning' : 'success',
+    message: warning || `成功 ${success}，重复 ${duplicate}，失败 ${failed}，实际导入 ${success}`,
+    tone: failed > 0 || warning ? 'warning' : 'success',
     duration: 5200
   })
 }

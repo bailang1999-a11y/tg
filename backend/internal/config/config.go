@@ -104,7 +104,7 @@ func Load() Config {
 	setDefault("TELEGRAM_MESSAGE_SCRIPT", "./scripts/telegram_message_send.py")
 	setDefault("TELEGRAM_LISTEN_SCRIPT", "./scripts/telegram_keyword_listen.py")
 	setDefault("TELEGRAM_APPLY_TIMEOUT_SECONDS", 90)
-	setDefault("APP_VERSION", "1.0.9")
+	setDefault("APP_VERSION", "1.0.10")
 	setDefault("APP_UPDATE_ENABLED", false)
 	setDefault("APP_UPDATE_DOCKER_SOCKET", "/var/run/docker.sock")
 	setDefault("APP_UPDATE_DOCKER_CONTAINER", "tg-updater")
