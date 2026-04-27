@@ -438,6 +438,10 @@ func (s *Server) dispatchRunnableTask(ctx context.Context, taskID uuid.UUID) {
 		if !s.enqueueTask(ctx, task, "run") {
 			go s.RunListenerProxyCheckTask(task.ID)
 		}
+	case "listener_account_check":
+		if !s.enqueueTask(ctx, task, "run") {
+			go s.RunListenerAccountCheckTask(task.ID)
+		}
 	case "account_status_check":
 		if !s.enqueueTask(ctx, task, "run") {
 			go s.RunCheckTerminalsTask(task.ID)

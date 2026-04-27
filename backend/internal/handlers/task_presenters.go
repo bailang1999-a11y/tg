@@ -113,6 +113,11 @@ func taskSettings(task models.Task) []taskSettingItem {
 		addSummary("normal", "正常")
 		addSummary("failed", "失败")
 		addSummary("timeout", "超时")
+	case "listener_account_check":
+		addSummary("total", "监听号总数")
+		addSummary("normal", "正常")
+		addSummary("offline", "离线")
+		addSummary("abnormal", "异常")
 	case "import":
 		addSummary("success", "导入成功")
 		addSummary("duplicates", "重复")
@@ -191,6 +196,8 @@ func taskTypeText(value string) string {
 		return "监听号自动加群"
 	case "listener_proxy_check":
 		return "监听代理检测"
+	case "listener_account_check":
+		return "监听账号检测"
 	case "audit_action":
 		return "操作日志"
 	default:
@@ -325,6 +332,10 @@ func taskLogActionText(value string) string {
 		return "检测账号状态"
 	case "test_proxy_latency":
 		return "检测代理延迟"
+	case "check_listener_account":
+		return "检测监听账号"
+	case "account_check_start":
+		return "开始检测监听账号"
 	case "join_success":
 		return "加入目标成功"
 	case "join_failed":

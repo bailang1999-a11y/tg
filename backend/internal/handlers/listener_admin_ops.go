@@ -264,35 +264,94 @@ func (s *Server) finishListenerProxyImportTask(c *gin.Context, task models.Task,
 	_ = s.createTaskLog(c.Request.Context(), task, level, "summary", detail, "", "")
 }
 
+type listenerAccountCheckPayload struct {
+	GroupID string `json:"group_id"`
+}
+
 func (s *Server) CheckListenerAccounts(c *gin.Context) {
 	var req struct {
 		GroupID string `json:"group_id"`
 	}
 	_ = c.ShouldBindJSON(&req)
 
-	tenantID := s.tenantID(c)
-	query := s.db.WithContext(c.Request.Context()).Where("tenant_id = ?", tenantID).Order("created_at desc")
-	if strings.TrimSpace(req.GroupID) != "" {
-		groupID, err := uuid.Parse(strings.TrimSpace(req.GroupID))
-		if err != nil {
+	payload := listenerAccountCheckPayload{GroupID: strings.TrimSpace(req.GroupID)}
+	if payload.GroupID != "" {
+		if _, err := uuid.Parse(payload.GroupID); err != nil {
 			utils.Fail(c, http.StatusBadRequest, "监听号分组无效")
+			return
+		}
+	}
+	rawPayload, _ := json.Marshal(payload)
+	task := models.Task{
+		ID:        uuid.New(),
+		TenantID:  s.tenantID(c),
+		Name:      "监听账号状态检测",
+		Type:      "listener_account_check",
+		Status:    "queued",
+		Progress:  0,
+		Payload:   datatypes.JSON(rawPayload),
+		CreatedBy: s.userIDPtr(c),
+	}
+	if err := s.db.WithContext(c.Request.Context()).Create(&task).Error; err != nil {
+		utils.Fail(c, http.StatusInternalServerError, "创建监听账号检测任务失败")
+		return
+	}
+	_ = s.createTaskLog(c.Request.Context(), task, "INFO", "created", "监听账号状态检测任务已创建，等待执行器消费", "", "")
+	if !s.enqueueTask(c.Request.Context(), task, "run") {
+		go s.RunListenerAccountCheckTask(task.ID)
+	}
+	utils.Created(c, gin.H{"task": task, "summary": listenerCheckSummary{}})
+}
+
+func (s *Server) RunListenerAccountCheckTask(taskID uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	claimed, release := s.claimTaskRun(ctx, taskID, "listener_account_check")
+	if !claimed {
+		return
+	}
+	defer release()
+	var task models.Task
+	if err := s.db.WithContext(ctx).Where("id = ? AND type = ?", taskID, "listener_account_check").First(&task).Error; err != nil {
+		return
+	}
+	var payload listenerAccountCheckPayload
+	if len(task.Payload) > 0 {
+		_ = json.Unmarshal(task.Payload, &payload)
+	}
+	s.runListenerAccountCheckTask(ctx, task, payload)
+}
+
+func (s *Server) runListenerAccountCheckTask(ctx context.Context, task models.Task, payload listenerAccountCheckPayload) {
+	query := s.db.WithContext(ctx).Where("tenant_id = ?", task.TenantID).Order("created_at desc")
+	if strings.TrimSpace(payload.GroupID) != "" {
+		groupID, err := uuid.Parse(strings.TrimSpace(payload.GroupID))
+		if err != nil {
+			s.finishListenerAccountCheckTask(ctx, task, "failed", listenerCheckSummary{}, "监听号分组无效："+err.Error())
 			return
 		}
 		query = query.Where("group_id = ?", groupID)
 	}
 	var accounts []models.ListenerAccount
 	if err := query.Find(&accounts).Error; err != nil {
-		utils.Fail(c, http.StatusInternalServerError, "读取监听账号失败")
+		s.finishListenerAccountCheckTask(ctx, task, "failed", listenerCheckSummary{}, "读取监听账号失败："+err.Error())
 		return
 	}
 
 	var targetTotal int64
-	_ = s.db.WithContext(c.Request.Context()).Model(&models.ListenerTarget{}).Where("tenant_id = ?", tenantID).Count(&targetTotal).Error
+	_ = s.db.WithContext(ctx).Model(&models.ListenerTarget{}).Where("tenant_id = ?", task.TenantID).Count(&targetTotal).Error
 	now := time.Now()
 	syncer := telegram_client.NewInspector(s.cfg)
 	summary := listenerCheckSummary{Total: len(accounts)}
 	exitCache := map[uuid.UUID]proxyExitResult{}
-	for _, account := range accounts {
+	s.updateTaskState(ctx, task.ID, "running", 1, nil)
+	s.logTaskBackground(ctx, task, "INFO", "start", fmt.Sprintf("开始检测监听账号状态：共 %d 个监听号", len(accounts)))
+	if len(accounts) == 0 {
+		s.finishListenerAccountCheckTask(ctx, task, "success", summary, "没有需要检测的监听号")
+		return
+	}
+	for index, account := range accounts {
+		startedAt := time.Now()
 		status := "normal"
 		riskStatus := firstNonEmpty(strings.TrimSpace(account.RiskStatus), "正常")
 		reason := "监听号已登记"
@@ -301,17 +360,19 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 		avatarURL := account.AvatarURL
 		lastOnlineAt := account.LastOnlineAt
 		joinedTargets := account.JoinedTargets
+		accountRef := firstNonEmpty(account.Phone, account.Nickname, account.ID.String())
+		s.logTaskBackground(ctx, task, "INFO", "account_check_start", fmt.Sprintf("开始检测监听号 %d/%d：%s", index+1, len(accounts), accountRef))
 
 		if account.FilePath != "" && isStoredTerminalFileReady(account.FilePath) {
-			avatarDir, avatarDirErr := prepareTerminalAvatarSyncDir(tenantID, account.ID)
+			avatarDir, avatarDirErr := prepareTerminalAvatarSyncDir(task.TenantID, account.ID)
 			if avatarDirErr != nil {
 				reason = firstNonEmpty(reason, "准备头像缓存目录失败")
 			}
-			syncResult, syncErr := syncer.Sync(c.Request.Context(), telegram_client.SyncRequest{
+			syncResult, syncErr := syncer.Sync(ctx, telegram_client.SyncRequest{
 				FilePath:   account.FilePath,
 				AccessType: telegram_client.NormalizeTelegramAccessType(account.AccessType),
 				AvatarDir:  avatarDir,
-				Proxy:      s.listenerAccountProxyConfig(c.Request.Context(), tenantID, account),
+				Proxy:      s.listenerAccountProxyConfig(ctx, task.TenantID, account),
 			})
 			if syncErr == nil || strings.TrimSpace(syncResult.Reason) != "" {
 				status = listenerNormalizeAccountStatus(syncResult.Status)
@@ -324,7 +385,7 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 					riskStatus = "代理不可用"
 				}
 				lastOnlineAt = syncResult.LastOnlineAt
-				avatarURL, reason = s.persistTerminalAvatar(tenantID, models.Terminal{ID: account.ID}, avatarURL, syncResult, reason)
+				avatarURL, reason = s.persistTerminalAvatar(task.TenantID, models.Terminal{ID: account.ID}, avatarURL, syncResult, reason)
 			} else {
 				status = "abnormal"
 				riskStatus = "检测失败"
@@ -351,14 +412,14 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 
 		if isListenerAccountNormal(status, riskStatus) {
 			summary.Normal++
-			joinedTargets = s.countActiveAccountTargetJoins(c.Request.Context(), uuid.Nil, accountJoinKindListener, account.ID)
+			joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
 		} else if status == "offline" {
 			summary.Offline++
-			joinedTargets = s.countActiveAccountTargetJoins(c.Request.Context(), uuid.Nil, accountJoinKindListener, account.ID)
+			joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
 		} else {
 			summary.Abnormal++
-			s.markAccountJoinRecordsUnavailable(c.Request.Context(), uuid.Nil, accountJoinKindListener, account.ID, reason)
-			joinedTargets = s.countActiveAccountTargetJoins(c.Request.Context(), uuid.Nil, accountJoinKindListener, account.ID)
+			s.markAccountJoinRecordsUnavailable(ctx, uuid.Nil, accountJoinKindListener, account.ID, reason)
+			joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
 		}
 		if joinedTargets > targetTotal {
 			joinedTargets = targetTotal
@@ -371,12 +432,12 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 		exitCountry := account.ExitCountry
 		exitFlag := account.ExitFlag
 		if account.ProxyID != nil {
-			exit := s.lookupListenerAccountProxyExit(c.Request.Context(), tenantID, *account.ProxyID, exitCache)
+			exit := s.lookupListenerAccountProxyExit(ctx, task.TenantID, *account.ProxyID, exitCache)
 			exitIP = exit.IP
 			exitCountry = exit.Country
 			exitFlag = exit.Flag
 		}
-		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerAccount{}).Where("tenant_id = ? AND id = ?", tenantID, account.ID).Updates(map[string]any{
+		if err := s.db.WithContext(ctx).Model(&models.ListenerAccount{}).Where("tenant_id = ? AND id = ?", task.TenantID, account.ID).Updates(map[string]any{
 			"phone":          normalizedPhone,
 			"nickname":       nickname,
 			"avatar_url":     avatarURL,
@@ -389,11 +450,37 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 			"joined_targets": joinedTargets,
 			"updated_at":     now,
 		}).Error; err != nil {
-			utils.Fail(c, http.StatusInternalServerError, "更新监听账号状态失败："+reason)
+			s.finishListenerAccountCheckTask(ctx, task, "failed", summary, "更新监听账号状态失败："+err.Error())
 			return
 		}
+		level := "INFO"
+		if !isListenerAccountNormal(status, riskStatus) && status != "offline" {
+			level = "WARN"
+		}
+		_ = s.createTaskLogWithDuration(ctx, task, level, "check_listener_account", fmt.Sprintf("%s -> %s（%s）", accountRef, firstNonEmpty(riskStatus, status), reason), accountRef, firstNonEmpty(exitIP, exitCountry), time.Since(startedAt).Milliseconds())
+		progress := 1 + int(float64(index+1)/float64(len(accounts))*94)
+		if progress > 95 {
+			progress = 95
+		}
+		s.updateTaskState(ctx, task.ID, "running", progress, nil)
 	}
-	utils.OK(c, summary)
+	status := "success"
+	if summary.Abnormal > 0 {
+		status = "partial_success"
+	}
+	s.finishListenerAccountCheckTask(ctx, task, status, summary, fmt.Sprintf("监听账号状态检测完成：总数 %d，正常 %d，离线 %d，异常 %d", summary.Total, summary.Normal, summary.Offline, summary.Abnormal))
+}
+
+func (s *Server) finishListenerAccountCheckTask(ctx context.Context, task models.Task, status string, summary listenerCheckSummary, detail string) {
+	payload, _ := json.Marshal(summary)
+	s.updateTaskState(ctx, task.ID, status, 100, datatypes.JSON(payload))
+	level := "INFO"
+	if status == "failed" {
+		level = "ERROR"
+	} else if status == "partial_success" {
+		level = "WARN"
+	}
+	_ = s.createTaskLog(ctx, task, level, "summary", detail, "", "")
 }
 
 func (s *Server) DeleteAbnormalListenerAccounts(c *gin.Context) {

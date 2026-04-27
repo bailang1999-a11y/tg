@@ -11,6 +11,25 @@
       </div>
     </div>
 
+    <GlassCard v-if="activeAccountTask" class="membership-task-card">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-bold">监听账号状态检测</h2>
+          <p class="mt-1 text-sm text-steel">{{ taskStatusText(activeAccountTask.status) }} · 更新 {{ formatDateTime(activeAccountTask.updated_at) }}</p>
+        </div>
+        <span class="status-pill" :data-tone="taskStatusTone(activeAccountTask.status)">{{ activeAccountTask.progress || 0 }}%</span>
+      </div>
+      <div class="progress-track mt-4">
+        <div class="progress-fill" :style="{ width: `${activeAccountTask.progress || 0}%` }"></div>
+      </div>
+      <div class="mt-4 grid gap-3 sm:grid-cols-4">
+        <div v-for="item in accountTaskSummaryCards" :key="item.label" class="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <div class="text-xs text-steel">{{ item.label }}</div>
+          <div class="mt-1 text-lg font-black text-white">{{ item.value }}</div>
+        </div>
+      </div>
+    </GlassCard>
+
     <GlassCard v-if="activeMembershipTask" class="membership-task-card">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -540,9 +559,11 @@ const pendingGroupName = ref('')
 const selectedAccountIDs = ref<string[]>([])
 const selectedTargetIDs = ref<string[]>([])
 const selectedProxyIDs = ref<string[]>([])
+const activeAccountTask = ref<Task | null>(null)
 const activeMembershipTask = ref<Task | null>(null)
 const activeJoinTask = ref<Task | null>(null)
 const activeProxyTask = ref<Task | null>(null)
+let accountTaskTimer: ReturnType<typeof window.setInterval> | null = null
 let membershipTaskTimer: ReturnType<typeof window.setInterval> | null = null
 let joinTaskTimer: ReturnType<typeof window.setInterval> | null = null
 let proxyTaskTimer: ReturnType<typeof window.setInterval> | null = null
@@ -554,6 +575,15 @@ const cards = computed(() => [
   { label: '监听代理', value: overview.value?.proxy_count || 0, tone: 'warning' },
   { label: '已分配出口', value: overview.value?.assigned_count || 0, tone: 'danger' }
 ])
+const accountTaskSummaryCards = computed(() => {
+  const summary = activeAccountTask.value?.summary || {}
+  return [
+    { label: '总数', value: numericSummary(summary, 'total') },
+    { label: '正常', value: numericSummary(summary, 'normal') },
+    { label: '离线', value: numericSummary(summary, 'offline') },
+    { label: '异常', value: numericSummary(summary, 'abnormal') }
+  ]
+})
 const membershipTaskSummaryCards = computed(() => {
   const summary = activeMembershipTask.value?.summary || {}
   return [
@@ -955,17 +985,31 @@ async function createListenerJoinTask() {
 }
 
 async function checkAccounts() {
+  const accepted = await ui.confirm({
+    title: '开始检测监听账号',
+    message: '检测会在后台任务中执行，过程会写入任务模块和日志中心。任务完成后无论你在哪个界面都会弹出提示。',
+    confirmText: '开始检测',
+    cancelText: '取消',
+    tone: 'info'
+  })
+  if (!accepted) return
   checkingAccounts.value = true
   message.value = ''
   error.value = ''
   try {
-    const summary = await api.checkListenerAccounts({ group_id: accountFilterGroupID.value })
-    message.value = `检测完成：总数 ${summary.total}，正常 ${summary.normal}，离线 ${summary.offline}，异常 ${summary.abnormal}`
-    await load()
+    const result = await api.checkListenerAccounts({ group_id: accountFilterGroupID.value })
+    trackAccountTask(result.task)
+    message.value = `监听账号检测任务已创建，正在后台运行。`
+    ui.toast({
+      title: '监听账号检测已启动',
+      message: `任务 ${result.task.id} 已进入任务模块，日志中心会记录每个监听号的检测结果。`,
+      tone: 'success',
+      duration: 6200
+    })
   } catch (err) {
     error.value = err instanceof Error ? err.message : '检测监听账号失败'
-  } finally {
     checkingAccounts.value = false
+    ui.toast({ title: '监听账号检测启动失败', message: error.value, tone: 'error', duration: 5200 })
   }
 }
 
@@ -1012,6 +1056,14 @@ function trackMembershipTask(task: Task) {
   membershipTaskTimer = window.setInterval(pollMembershipTask, 2500)
 }
 
+function trackAccountTask(task: Task) {
+  activeAccountTask.value = task
+  checkingAccounts.value = true
+  ui.trackTask({ id: task.id, title: '监听账号状态检测', startedAt: Date.now() })
+  if (accountTaskTimer) window.clearInterval(accountTaskTimer)
+  accountTaskTimer = window.setInterval(pollAccountTask, 2500)
+}
+
 function trackJoinTask(task: Task) {
   activeJoinTask.value = task
   joiningTargets.value = true
@@ -1025,6 +1077,43 @@ function trackProxyTask(task: Task) {
   ui.trackTask({ id: task.id, title: '代理延迟检测', startedAt: Date.now() })
   if (proxyTaskTimer) window.clearInterval(proxyTaskTimer)
   proxyTaskTimer = window.setInterval(pollProxyTask, 2500)
+}
+
+async function pollAccountTask() {
+  const taskID = activeAccountTask.value?.id
+  if (!taskID) {
+    stopAccountTaskPolling()
+    return
+  }
+  try {
+    const tasks = await api.tasks({ type: 'listener_account_check', limit: 50 })
+    const next = tasks.find((task) => task.id === taskID)
+    if (next) activeAccountTask.value = next
+    if (next && isTaskFinished(next.status)) {
+      stopAccountTaskPolling()
+      await load()
+      if (ui.trackedTasks.some((task) => task.id === next.id)) {
+        ui.untrackTask(next.id)
+        ui.toast({
+          title: '监听账号检测完成',
+          message: accountTaskDoneMessage(next),
+          tone: next.status === 'failed' ? 'error' : next.status === 'partial_success' ? 'warning' : 'success',
+          duration: 7000
+        })
+      }
+    }
+  } catch (err) {
+    stopAccountTaskPolling()
+    error.value = err instanceof Error ? err.message : '读取监听账号检测进度失败'
+  }
+}
+
+function stopAccountTaskPolling() {
+  if (accountTaskTimer) {
+    window.clearInterval(accountTaskTimer)
+    accountTaskTimer = null
+  }
+  checkingAccounts.value = false
 }
 
 async function pollMembershipTask() {
@@ -1386,6 +1475,11 @@ function membershipTaskDoneMessage(task: Task) {
   return `有效 ${numericSummary(summary, 'active')}，移除 ${numericSummary(summary, 'removed')}，待复查 ${numericSummary(summary, 'skipped') + numericSummary(summary, 'failed')}。`
 }
 
+function accountTaskDoneMessage(task: Task) {
+  const summary = task.summary || {}
+  return `总数 ${numericSummary(summary, 'total')}，正常 ${numericSummary(summary, 'normal')}，离线 ${numericSummary(summary, 'offline')}，异常 ${numericSummary(summary, 'abnormal')}。`
+}
+
 function joinTaskDoneMessage(task: Task) {
   const summary = task.summary || {}
   return `成功 ${numericSummary(summary, 'success')}，失败 ${numericSummary(summary, 'failed')}，跳过 ${numericSummary(summary, 'skipped')}。`
@@ -1394,6 +1488,16 @@ function joinTaskDoneMessage(task: Task) {
 function proxyTaskDoneMessage(task: Task) {
   const summary = task.summary || {}
   return `总数 ${numericSummary(summary, 'total')}，正常 ${numericSummary(summary, 'normal')}，失败 ${numericSummary(summary, 'failed')}，超时 ${numericSummary(summary, 'timeout')}。`
+}
+
+async function resumeAccountTask() {
+  try {
+    const tasks = await api.tasks({ type: 'listener_account_check', limit: 50 })
+    const running = tasks.find((task) => !isTaskFinished(task.status))
+    if (running) trackAccountTask(running)
+  } catch {
+    // 页面恢复任务失败不阻塞主列表加载。
+  }
 }
 
 async function resumeMembershipTask() {
@@ -1563,11 +1667,13 @@ watch(proxyPageCount, (count) => {
 
 onMounted(async () => {
   await load()
+  await resumeAccountTask()
   await resumeMembershipTask()
   await resumeJoinTask()
   await resumeProxyTask()
 })
 onUnmounted(() => {
+  stopAccountTaskPolling()
   stopMembershipTaskPolling()
   stopJoinTaskPolling()
   stopProxyTaskPolling()

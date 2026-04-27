@@ -1,3 +1,5 @@
+import type { Task } from './task'
+
 export type ListenerAdminOverview = {
   account_count: number
   target_count: number
@@ -77,6 +79,11 @@ export type ListenerCheckSummary = {
   normal: number
   abnormal: number
   offline: number
+}
+
+export type ListenerCheckTaskResponse = {
+  task: Task
+  summary: ListenerCheckSummary
 }
 
 export type ListenerProxyCheckSummary = {

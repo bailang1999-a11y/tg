@@ -2,7 +2,7 @@ import { request } from '../request'
 import type {
   ListenerAccount,
   ListenerAdminOverview,
-  ListenerCheckSummary,
+  ListenerCheckTaskResponse,
   ListenerJoinTargetsRequest,
   ListenerProxy,
   ListenerProxyAssignment,
@@ -31,7 +31,7 @@ export const listenerApi = {
     return request<TargetImportSummary>('/api/v1/listener-admin/accounts/import-files', { method: 'POST', body: form })
   },
   checkListenerAccounts: (payload: { group_id?: string }) =>
-    request<ListenerCheckSummary>('/api/v1/listener-admin/accounts/check', { method: 'POST', body: JSON.stringify(payload) }),
+    request<ListenerCheckTaskResponse>('/api/v1/listener-admin/accounts/check', { method: 'POST', body: JSON.stringify(payload) }),
   deleteAbnormalListenerAccounts: () =>
     request<{ deleted: number }>('/api/v1/listener-admin/accounts/abnormal', { method: 'DELETE' }),
   deleteListenerAccount: (id: string) =>
