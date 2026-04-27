@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"codex3/backend/internal/models"
@@ -304,7 +305,7 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 }
 
 func (s *Server) RunListenerAccountCheckTask(taskID uuid.UUID) {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
 	claimed, release := s.claimTaskRun(ctx, taskID, "listener_account_check")
 	if !claimed {
@@ -344,133 +345,182 @@ func (s *Server) runListenerAccountCheckTask(ctx context.Context, task models.Ta
 	syncer := telegram_client.NewInspector(s.cfg)
 	summary := listenerCheckSummary{Total: len(accounts)}
 	exitCache := map[uuid.UUID]proxyExitResult{}
+	var exitCacheMu sync.Mutex
+	concurrency := s.cfg.ListenerAccountCheckConcurrency
+	if concurrency <= 0 {
+		concurrency = 4
+	}
+	if concurrency > len(accounts) && len(accounts) > 0 {
+		concurrency = len(accounts)
+	}
 	s.updateTaskState(ctx, task.ID, "running", 1, nil)
-	s.logTaskBackground(ctx, task, "INFO", "start", fmt.Sprintf("开始检测监听账号状态：共 %d 个监听号", len(accounts)))
+	s.logTaskBackground(ctx, task, "INFO", "start", fmt.Sprintf("开始检测监听账号状态：共 %d 个监听号，并发 %d", len(accounts), concurrency))
 	if len(accounts) == 0 {
 		s.finishListenerAccountCheckTask(ctx, task, "success", summary, "没有需要检测的监听号")
 		return
 	}
+	var summaryMu sync.Mutex
+	var progressMu sync.Mutex
+	var completed int
+	var firstUpdateErr error
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
 	for index, account := range accounts {
-		startedAt := time.Now()
-		status := "normal"
-		riskStatus := firstNonEmpty(strings.TrimSpace(account.RiskStatus), "正常")
-		reason := "监听号已登记"
-		phone := account.Phone
-		nickname := account.Nickname
-		avatarURL := account.AvatarURL
-		lastOnlineAt := account.LastOnlineAt
-		joinedTargets := account.JoinedTargets
-		accountRef := firstNonEmpty(account.Phone, account.Nickname, account.ID.String())
-		s.logTaskBackground(ctx, task, "INFO", "account_check_start", fmt.Sprintf("开始检测监听号 %d/%d：%s", index+1, len(accounts), accountRef))
+		index := index
+		account := account
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			startedAt := time.Now()
+			status := "normal"
+			riskStatus := firstNonEmpty(strings.TrimSpace(account.RiskStatus), "正常")
+			reason := "监听号已登记"
+			phone := account.Phone
+			nickname := account.Nickname
+			avatarURL := account.AvatarURL
+			lastOnlineAt := account.LastOnlineAt
+			joinedTargets := account.JoinedTargets
+			accountRef := firstNonEmpty(account.Phone, account.Nickname, account.ID.String())
+			s.logTaskBackground(ctx, task, "INFO", "account_check_start", fmt.Sprintf("开始检测监听号 %d/%d：%s", index+1, len(accounts), accountRef))
 
-		if account.FilePath != "" && isStoredTerminalFileReady(account.FilePath) {
-			avatarDir, avatarDirErr := prepareTerminalAvatarSyncDir(task.TenantID, account.ID)
-			if avatarDirErr != nil {
-				reason = firstNonEmpty(reason, "准备头像缓存目录失败")
-			}
-			syncResult, syncErr := syncer.Sync(ctx, telegram_client.SyncRequest{
-				FilePath:   account.FilePath,
-				AccessType: telegram_client.NormalizeTelegramAccessType(account.AccessType),
-				AvatarDir:  avatarDir,
-				Proxy:      s.listenerAccountProxyConfig(ctx, task.TenantID, account),
-			})
-			if syncErr == nil || strings.TrimSpace(syncResult.Reason) != "" {
-				status = listenerNormalizeAccountStatus(syncResult.Status)
-				reason = firstNonEmpty(syncResult.Reason, reason)
-				phone = firstNonEmpty(syncResult.Phone, phone)
-				nickname = firstNonEmpty(syncResult.Nickname, nickname)
-				riskStatus = firstNonEmpty(syncResult.RiskStatus, riskStatus)
-				if account.ProxyID != nil && listenerAccountProxyFailure(reason) {
+			if account.FilePath != "" && isStoredTerminalFileReady(account.FilePath) {
+				avatarDir, avatarDirErr := prepareTerminalAvatarSyncDir(task.TenantID, account.ID)
+				if avatarDirErr != nil {
+					reason = firstNonEmpty(reason, "准备头像缓存目录失败")
+				}
+				syncResult, syncErr := syncer.Sync(ctx, telegram_client.SyncRequest{
+					FilePath:   account.FilePath,
+					AccessType: telegram_client.NormalizeTelegramAccessType(account.AccessType),
+					AvatarDir:  avatarDir,
+					Proxy:      s.listenerAccountProxyConfig(ctx, task.TenantID, account),
+				})
+				if syncErr == nil || strings.TrimSpace(syncResult.Reason) != "" {
+					status = listenerNormalizeAccountStatus(syncResult.Status)
+					reason = firstNonEmpty(syncResult.Reason, reason)
+					phone = firstNonEmpty(syncResult.Phone, phone)
+					nickname = firstNonEmpty(syncResult.Nickname, nickname)
+					riskStatus = firstNonEmpty(syncResult.RiskStatus, riskStatus)
+					if account.ProxyID != nil && listenerAccountProxyFailure(reason) {
+						status = "abnormal"
+						riskStatus = "代理不可用"
+					}
+					lastOnlineAt = syncResult.LastOnlineAt
+					avatarURL, reason = s.persistTerminalAvatar(task.TenantID, models.Terminal{ID: account.ID}, avatarURL, syncResult, reason)
+				} else {
 					status = "abnormal"
-					riskStatus = "代理不可用"
+					riskStatus = "检测失败"
+					reason = syncErr.Error()
+					if account.ProxyID != nil && listenerAccountProxyFailure(reason) {
+						riskStatus = "代理不可用"
+					} else if strings.Contains(reason, "资料同步超时") || strings.Contains(strings.ToLower(reason), "deadline exceeded") {
+						riskStatus = "检测超时"
+					}
 				}
-				lastOnlineAt = syncResult.LastOnlineAt
-				avatarURL, reason = s.persistTerminalAvatar(task.TenantID, models.Terminal{ID: account.ID}, avatarURL, syncResult, reason)
-			} else {
+				if avatarDir != "" {
+					_ = os.RemoveAll(avatarDir)
+				}
+			} else if strings.TrimSpace(account.FilePath) == "" {
 				status = "abnormal"
-				riskStatus = "检测失败"
-				reason = syncErr.Error()
-				if account.ProxyID != nil && listenerAccountProxyFailure(reason) {
-					riskStatus = "代理不可用"
-				} else if strings.Contains(reason, "资料同步超时") || strings.Contains(strings.ToLower(reason), "deadline exceeded") {
-					riskStatus = "检测超时"
-				}
+				riskStatus = "需重新导入"
+				reason = "缺少本地会话文件"
+			} else if !isStoredTerminalFileReady(account.FilePath) {
+				status = "abnormal"
+				riskStatus = "需重新导入"
+				reason = "本地会话文件不存在"
+			} else if strings.TrimSpace(account.Phone) == "" {
+				status = "abnormal"
+				riskStatus = "缺少手机号"
 			}
-			if avatarDir != "" {
-				_ = os.RemoveAll(avatarDir)
-			}
-		} else if strings.TrimSpace(account.FilePath) == "" {
-			status = "abnormal"
-			riskStatus = "需重新导入"
-			reason = "缺少本地会话文件"
-		} else if !isStoredTerminalFileReady(account.FilePath) {
-			status = "abnormal"
-			riskStatus = "需重新导入"
-			reason = "本地会话文件不存在"
-		} else if strings.TrimSpace(account.Phone) == "" {
-			status = "abnormal"
-			riskStatus = "缺少手机号"
-		}
 
-		if isListenerAccountNormal(status, riskStatus) {
-			summary.Normal++
-			joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
-		} else if status == "offline" {
-			summary.Offline++
-			joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
-		} else {
-			summary.Abnormal++
-			s.markAccountJoinRecordsUnavailable(ctx, uuid.Nil, accountJoinKindListener, account.ID, reason)
-			joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
-		}
-		if joinedTargets > targetTotal {
-			joinedTargets = targetTotal
-		}
-		normalizedPhone, _, _ := syncTerminalPhoneIdentity(phone, "", "")
-		if normalizedPhone == "" {
-			normalizedPhone = phone
-		}
-		exitIP := account.ExitIP
-		exitCountry := account.ExitCountry
-		exitFlag := account.ExitFlag
-		if account.ProxyID != nil {
-			exit := s.lookupListenerAccountProxyExit(ctx, task.TenantID, *account.ProxyID, exitCache)
-			exitIP = exit.IP
-			exitCountry = exit.Country
-			exitFlag = exit.Flag
-		}
-		if err := s.db.WithContext(ctx).Model(&models.ListenerAccount{}).Where("tenant_id = ? AND id = ?", task.TenantID, account.ID).Updates(map[string]any{
-			"phone":          normalizedPhone,
-			"nickname":       nickname,
-			"avatar_url":     avatarURL,
-			"exit_ip":        exitIP,
-			"exit_country":   exitCountry,
-			"exit_flag":      exitFlag,
-			"status":         status,
-			"risk_status":    riskStatus,
-			"last_online_at": lastOnlineAt,
-			"joined_targets": joinedTargets,
-			"updated_at":     now,
-		}).Error; err != nil {
-			s.finishListenerAccountCheckTask(ctx, task, "failed", summary, "更新监听账号状态失败："+err.Error())
-			return
-		}
-		level := "INFO"
-		if !isListenerAccountNormal(status, riskStatus) && status != "offline" {
-			level = "WARN"
-		}
-		_ = s.createTaskLogWithDuration(ctx, task, level, "check_listener_account", fmt.Sprintf("%s -> %s（%s）", accountRef, firstNonEmpty(riskStatus, status), reason), accountRef, firstNonEmpty(exitIP, exitCountry), time.Since(startedAt).Milliseconds())
-		progress := 1 + int(float64(index+1)/float64(len(accounts))*94)
-		if progress > 95 {
-			progress = 95
-		}
-		s.updateTaskState(ctx, task.ID, "running", progress, nil)
+			if isListenerAccountNormal(status, riskStatus) {
+				summaryMu.Lock()
+				summary.Normal++
+				summaryMu.Unlock()
+				joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
+			} else if status == "offline" {
+				summaryMu.Lock()
+				summary.Offline++
+				summaryMu.Unlock()
+				joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
+			} else {
+				summaryMu.Lock()
+				summary.Abnormal++
+				summaryMu.Unlock()
+				s.markAccountJoinRecordsUnavailable(ctx, uuid.Nil, accountJoinKindListener, account.ID, reason)
+				joinedTargets = s.countActiveAccountTargetJoins(ctx, uuid.Nil, accountJoinKindListener, account.ID)
+			}
+			if joinedTargets > targetTotal {
+				joinedTargets = targetTotal
+			}
+			normalizedPhone, _, _ := syncTerminalPhoneIdentity(phone, "", "")
+			if normalizedPhone == "" {
+				normalizedPhone = phone
+			}
+			exitIP := account.ExitIP
+			exitCountry := account.ExitCountry
+			exitFlag := account.ExitFlag
+			if account.ProxyID != nil {
+				exitCacheMu.Lock()
+				exit := s.lookupListenerAccountProxyExit(ctx, task.TenantID, *account.ProxyID, exitCache)
+				exitCacheMu.Unlock()
+				exitIP = exit.IP
+				exitCountry = exit.Country
+				exitFlag = exit.Flag
+			}
+			if err := s.db.WithContext(ctx).Model(&models.ListenerAccount{}).Where("tenant_id = ? AND id = ?", task.TenantID, account.ID).Updates(map[string]any{
+				"phone":          normalizedPhone,
+				"nickname":       nickname,
+				"avatar_url":     avatarURL,
+				"exit_ip":        exitIP,
+				"exit_country":   exitCountry,
+				"exit_flag":      exitFlag,
+				"status":         status,
+				"risk_status":    riskStatus,
+				"last_online_at": lastOnlineAt,
+				"joined_targets": joinedTargets,
+				"updated_at":     now,
+			}).Error; err != nil {
+				progressMu.Lock()
+				if firstUpdateErr == nil {
+					firstUpdateErr = err
+				}
+				progressMu.Unlock()
+				s.logTaskBackground(ctx, task, "ERROR", "account_update_failed", fmt.Sprintf("%s -> 更新监听账号状态失败：%s", accountRef, err.Error()))
+				return
+			}
+			level := "INFO"
+			if !isListenerAccountNormal(status, riskStatus) && status != "offline" {
+				level = "WARN"
+			}
+			_ = s.createTaskLogWithDuration(ctx, task, level, "check_listener_account", fmt.Sprintf("%s -> %s（%s）", accountRef, firstNonEmpty(riskStatus, status), reason), accountRef, firstNonEmpty(exitIP, exitCountry), time.Since(startedAt).Milliseconds())
+			progressMu.Lock()
+			completed++
+			progress := 1 + int(float64(completed)/float64(len(accounts))*94)
+			if progress > 95 {
+				progress = 95
+			}
+			s.updateTaskState(ctx, task.ID, "running", progress, nil)
+			progressMu.Unlock()
+		}()
 	}
+	wg.Wait()
+	if firstUpdateErr != nil {
+		summaryMu.Lock()
+		finalSummary := summary
+		summaryMu.Unlock()
+		s.finishListenerAccountCheckTask(ctx, task, "failed", finalSummary, "更新监听账号状态失败："+firstUpdateErr.Error())
+		return
+	}
+	summaryMu.Lock()
+	finalSummary := summary
+	summaryMu.Unlock()
 	status := "success"
-	if summary.Abnormal > 0 {
+	if finalSummary.Abnormal > 0 {
 		status = "partial_success"
 	}
-	s.finishListenerAccountCheckTask(ctx, task, status, summary, fmt.Sprintf("监听账号状态检测完成：总数 %d，正常 %d，离线 %d，异常 %d", summary.Total, summary.Normal, summary.Offline, summary.Abnormal))
+	s.finishListenerAccountCheckTask(ctx, task, status, finalSummary, fmt.Sprintf("监听账号状态检测完成：总数 %d，正常 %d，离线 %d，异常 %d，并发 %d", finalSummary.Total, finalSummary.Normal, finalSummary.Offline, finalSummary.Abnormal, concurrency))
 }
 
 func (s *Server) finishListenerAccountCheckTask(ctx context.Context, task models.Task, status string, summary listenerCheckSummary, detail string) {
