@@ -21,10 +21,10 @@ cd tg
 services:
   frontend:
     build:
-      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.28}"
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.29}"
       dockerfile: frontend/Dockerfile
       args:
-        APP_VERSION: "${APP_VERSION:-1.0.28}"
+        APP_VERSION: "${APP_VERSION:-1.0.29}"
     container_name: tg-frontend
     restart: unless-stopped
     ports:
@@ -38,9 +38,9 @@ services:
 
   gateway:
     build:
-      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.28}:backend"
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.29}:backend"
       args:
-        APP_VERSION: "${APP_VERSION:-1.0.28}"
+        APP_VERSION: "${APP_VERSION:-1.0.29}"
     container_name: tg-gateway
     restart: unless-stopped
     # 一键更新需要访问 /var/run/docker.sock；保持 root 才能在多数 1Panel/Docker 环境中正常调用 Docker API
@@ -53,8 +53,9 @@ services:
       - tg_storage:/app/storage
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
-      APP_VERSION: "${APP_VERSION:-1.0.28}"
-      LISTENER_ACCOUNT_CHECK_CONCURRENCY: "${LISTENER_ACCOUNT_CHECK_CONCURRENCY:-4}"
+      APP_VERSION: "${APP_VERSION:-1.0.29}"
+      LISTENER_ACCOUNT_CHECK_CONCURRENCY: "${LISTENER_ACCOUNT_CHECK_CONCURRENCY:-10}"
+      LISTENER_PROXY_CHECK_CONCURRENCY: "${LISTENER_PROXY_CHECK_CONCURRENCY:-20}"
       APP_ENV: "production"
       APP_PORT: "8080"
       # 数据库连接配置；如果修改 postgres.POSTGRES_PASSWORD，这里的 password 也要同步修改
@@ -85,7 +86,7 @@ services:
       APP_UPDATE_ENABLED: "true"
       APP_UPDATE_DOCKER_SOCKET: "/var/run/docker.sock"
       APP_UPDATE_DOCKER_CONTAINER: "tg-updater"
-      APP_UPDATE_COMMAND: "cd /workspace && LATEST_TAG=$$(wget -qO- https://api.github.com/repos/bailang1999-a11y/TG-Marketing-Assistant/tags | sed -n 's/.*\"name\": \"\\(v[0-9][^\"]*\\)\".*/\\1/p' | head -n 1); export APP_GIT_REF=$${LATEST_TAG:-v1.0.28}; export APP_VERSION=$${APP_GIT_REF#v}; docker compose up -d --build --force-recreate --remove-orphans frontend gateway worker scheduler postgres redis nats"
+      APP_UPDATE_COMMAND: "cd /workspace && LATEST_TAG=$$(wget -qO- https://api.github.com/repos/bailang1999-a11y/TG-Marketing-Assistant/tags | sed -n 's/.*\"name\": \"\\(v[0-9][^\"]*\\)\".*/\\1/p' | head -n 1); export APP_GIT_REF=$${LATEST_TAG:-v1.0.29}; export APP_VERSION=$${APP_GIT_REF#v}; docker compose up -d --build --force-recreate --remove-orphans frontend gateway worker scheduler postgres redis nats"
     depends_on:
       postgres:
         condition: service_healthy
@@ -106,9 +107,9 @@ services:
 
   worker:
     build:
-      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.28}:backend"
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.29}:backend"
       args:
-        APP_VERSION: "${APP_VERSION:-1.0.28}"
+        APP_VERSION: "${APP_VERSION:-1.0.29}"
     container_name: tg-worker
     restart: unless-stopped
     command: ["/app/worker"]
@@ -120,7 +121,8 @@ services:
       - tg_storage:/app/storage
     environment:
       APP_ENV: "production"
-      LISTENER_ACCOUNT_CHECK_CONCURRENCY: "${LISTENER_ACCOUNT_CHECK_CONCURRENCY:-4}"
+      LISTENER_ACCOUNT_CHECK_CONCURRENCY: "${LISTENER_ACCOUNT_CHECK_CONCURRENCY:-10}"
+      LISTENER_PROXY_CHECK_CONCURRENCY: "${LISTENER_PROXY_CHECK_CONCURRENCY:-20}"
       # 数据库连接配置；必须和 gateway、postgres 的数据库密码保持一致
       DATABASE_DSN: "host=postgres user=tg_marketing password=tg_postgres_change_this_9f8a3f6b9f2d4c1a dbname=tg_marketing port=5432 sslmode=disable TimeZone=Asia/Shanghai"
       REDIS_ADDR: "redis:6379"
@@ -144,9 +146,9 @@ services:
 
   scheduler:
     build:
-      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.28}:backend"
+      context: "https://github.com/bailang1999-a11y/TG-Marketing-Assistant.git#${APP_GIT_REF:-v1.0.29}:backend"
       args:
-        APP_VERSION: "${APP_VERSION:-1.0.28}"
+        APP_VERSION: "${APP_VERSION:-1.0.29}"
     container_name: tg-scheduler
     restart: unless-stopped
     command: ["/app/scheduler"]

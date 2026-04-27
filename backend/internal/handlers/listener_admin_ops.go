@@ -643,84 +643,128 @@ func (s *Server) runListenerProxyCheckTask(ctx context.Context, task models.Task
 		return
 	}
 	summary := listenerProxyCheckSummary{Total: len(proxies)}
+	concurrency := s.cfg.ListenerProxyCheckConcurrency
+	if concurrency <= 0 {
+		concurrency = 20
+	}
+	if concurrency > len(proxies) && len(proxies) > 0 {
+		concurrency = len(proxies)
+	}
 	s.updateTaskState(ctx, task.ID, "running", 1, nil)
-	s.logTaskBackground(ctx, task, "INFO", "start", fmt.Sprintf("开始检测监听代理延迟：共 %d 个代理", len(proxies)))
+	s.logTaskBackground(ctx, task, "INFO", "start", fmt.Sprintf("开始检测监听代理延迟：共 %d 个代理，并发 %d", len(proxies), concurrency))
 	if len(proxies) == 0 {
 		s.finishListenerProxyCheckTask(ctx, task, "success", summary, "没有需要检测的代理")
 		return
 	}
+	var summaryMu sync.Mutex
+	var progressMu sync.Mutex
+	var completed int
+	var firstUpdateErr error
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
 	for index, item := range proxies {
-		startedAt := time.Now()
-		address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
-		s.logTaskBackground(ctx, task, "INFO", "proxy_check_start", fmt.Sprintf("开始检测代理 %d/%d：%s %s", index+1, len(proxies), strings.ToUpper(item.Protocol), address))
-		latency, status := measureListenerProxy(item)
-		exitIP := ""
-		country := firstNonEmpty(item.Country, "未知")
-		flag := item.Flag
-		if status == "normal" {
-			s.logTaskBackground(ctx, task, "INFO", "proxy_exit_lookup", fmt.Sprintf("代理 %d/%d 连通性正常，开始查询真实出口 IP：%s", index+1, len(proxies), address))
-			exit := lookupListenerProxyExit(ctx, item)
-			exitIP = exit.IP
-			if exit.Country != "" {
-				country = exit.Country
+		index := index
+		item := item
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			startedAt := time.Now()
+			address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+			s.logTaskBackground(ctx, task, "INFO", "proxy_check_start", fmt.Sprintf("开始检测代理 %d/%d：%s %s", index+1, len(proxies), strings.ToUpper(item.Protocol), address))
+			latency, status := measureListenerProxy(item)
+			exitIP := ""
+			country := firstNonEmpty(item.Country, "未知")
+			flag := item.Flag
+			if status == "normal" {
+				s.logTaskBackground(ctx, task, "INFO", "proxy_exit_lookup", fmt.Sprintf("代理 %d/%d 连通性正常，开始查询真实出口 IP：%s", index+1, len(proxies), address))
+				exit := lookupListenerProxyExit(ctx, item)
+				exitIP = exit.IP
+				if exit.Country != "" {
+					country = exit.Country
+				}
+				if exit.Flag != "" {
+					flag = exit.Flag
+				}
+				item.ExitIP = exitIP
 			}
-			if exit.Flag != "" {
-				flag = exit.Flag
+			telegramStatus := "untested"
+			telegramError := ""
+			webStatus := "untested"
+			webError := ""
+			if status == "normal" {
+				webStatus, webError = measureWebTelegramProxy(item)
+				telegramStatus, telegramError = measureTelegramProxy(item)
 			}
-			item.ExitIP = exitIP
-		}
-		telegramStatus := "untested"
-		telegramError := ""
-		webStatus := "untested"
-		webError := ""
-		if status == "normal" {
-			webStatus, webError = measureWebTelegramProxy(item)
-			telegramStatus, telegramError = measureTelegramProxy(item)
-		}
-		switch status {
-		case "normal":
-			summary.Normal++
-		case "timeout":
-			summary.Timeout++
-		default:
-			summary.Failed++
-		}
-		if err := s.db.WithContext(ctx).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", task.TenantID, item.ID).Updates(map[string]any{
-			"latency_ms":      latency,
-			"status":          status,
-			"exit_ip":         exitIP,
-			"country":         country,
-			"flag":            flag,
-			"web_status":      webStatus,
-			"web_error":       webError,
-			"telegram_status": telegramStatus,
-			"telegram_error":  telegramError,
-			"updated_at":      time.Now(),
-		}).Error; err != nil {
-			summary.Failed++
-			s.finishListenerProxyCheckTask(ctx, task, "failed", summary, "更新代理延迟失败："+err.Error())
-			return
-		}
-		detail := listenerProxyCheckLogDetail(item, status, latency, exitIP, country, webStatus, webError, telegramStatus, telegramError)
-		level := "INFO"
-		if status == "timeout" {
-			level = "WARN"
-		} else if status != "normal" {
-			level = "ERROR"
-		}
-		_ = s.createTaskLogWithDuration(ctx, task, level, "test_proxy_latency", detail, address, firstNonEmpty(exitIP, country), time.Since(startedAt).Milliseconds())
-		progress := 1 + int(float64(index+1)/float64(len(proxies))*94)
-		if progress > 95 {
-			progress = 95
-		}
-		s.updateTaskState(ctx, task.ID, "running", progress, nil)
+			summaryMu.Lock()
+			switch status {
+			case "normal":
+				summary.Normal++
+			case "timeout":
+				summary.Timeout++
+			default:
+				summary.Failed++
+			}
+			summaryMu.Unlock()
+			if err := s.db.WithContext(ctx).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", task.TenantID, item.ID).Updates(map[string]any{
+				"latency_ms":      latency,
+				"status":          status,
+				"exit_ip":         exitIP,
+				"country":         country,
+				"flag":            flag,
+				"web_status":      webStatus,
+				"web_error":       webError,
+				"telegram_status": telegramStatus,
+				"telegram_error":  telegramError,
+				"updated_at":      time.Now(),
+			}).Error; err != nil {
+				summaryMu.Lock()
+				summary.Failed++
+				summaryMu.Unlock()
+				progressMu.Lock()
+				if firstUpdateErr == nil {
+					firstUpdateErr = err
+				}
+				progressMu.Unlock()
+				s.logTaskBackground(ctx, task, "ERROR", "proxy_update_failed", fmt.Sprintf("%s -> 更新代理延迟失败：%s", address, err.Error()))
+				return
+			}
+			detail := listenerProxyCheckLogDetail(item, status, latency, exitIP, country, webStatus, webError, telegramStatus, telegramError)
+			level := "INFO"
+			if status == "timeout" {
+				level = "WARN"
+			} else if status != "normal" {
+				level = "ERROR"
+			}
+			_ = s.createTaskLogWithDuration(ctx, task, level, "test_proxy_latency", detail, address, firstNonEmpty(exitIP, country), time.Since(startedAt).Milliseconds())
+			progressMu.Lock()
+			completed++
+			progress := 1 + int(float64(completed)/float64(len(proxies))*94)
+			if progress > 95 {
+				progress = 95
+			}
+			s.updateTaskState(ctx, task.ID, "running", progress, nil)
+			progressMu.Unlock()
+		}()
 	}
+	wg.Wait()
+	if firstUpdateErr != nil {
+		summaryMu.Lock()
+		finalSummary := summary
+		summaryMu.Unlock()
+		s.finishListenerProxyCheckTask(ctx, task, "failed", finalSummary, "更新代理延迟失败："+firstUpdateErr.Error())
+		return
+	}
+	summaryMu.Lock()
+	finalSummary := summary
+	summaryMu.Unlock()
 	status := "success"
-	if summary.Failed > 0 || summary.Timeout > 0 {
+	if finalSummary.Failed > 0 || finalSummary.Timeout > 0 {
 		status = "partial_success"
 	}
-	detail := fmt.Sprintf("代理延迟检测完成：总数 %d，正常 %d，失败 %d，超时 %d", summary.Total, summary.Normal, summary.Failed, summary.Timeout)
-	s.finishListenerProxyCheckTask(ctx, task, status, summary, detail)
+	detail := fmt.Sprintf("代理延迟检测完成：总数 %d，正常 %d，失败 %d，超时 %d，并发 %d", finalSummary.Total, finalSummary.Normal, finalSummary.Failed, finalSummary.Timeout, concurrency)
+	s.finishListenerProxyCheckTask(ctx, task, status, finalSummary, detail)
 }
 
 func (s *Server) finishListenerProxyCheckTask(ctx context.Context, task models.Task, status string, summary listenerProxyCheckSummary, detail string) {

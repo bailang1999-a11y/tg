@@ -38,6 +38,7 @@ type Config struct {
 	TelegramSyncScript              string
 	TelegramSyncTimeoutSeconds      int
 	ListenerAccountCheckConcurrency int
+	ListenerProxyCheckConcurrency   int
 	TelegramApplyScript             string
 	TelegramMessageScript           string
 	TelegramListenScript            string
@@ -101,12 +102,13 @@ func Load() Config {
 	setDefault("TELEGRAM_SYNC_PYTHON", "./.venv/bin/python")
 	setDefault("TELEGRAM_SYNC_SCRIPT", "./scripts/telegram_profile_sync.py")
 	setDefault("TELEGRAM_SYNC_TIMEOUT_SECONDS", 90)
-	setDefault("LISTENER_ACCOUNT_CHECK_CONCURRENCY", 4)
+	setDefault("LISTENER_ACCOUNT_CHECK_CONCURRENCY", 10)
+	setDefault("LISTENER_PROXY_CHECK_CONCURRENCY", 20)
 	setDefault("TELEGRAM_APPLY_SCRIPT", "./scripts/telegram_profile_apply.py")
 	setDefault("TELEGRAM_MESSAGE_SCRIPT", "./scripts/telegram_message_send.py")
 	setDefault("TELEGRAM_LISTEN_SCRIPT", "./scripts/telegram_keyword_listen.py")
 	setDefault("TELEGRAM_APPLY_TIMEOUT_SECONDS", 90)
-	setDefault("APP_VERSION", "1.0.28")
+	setDefault("APP_VERSION", "1.0.29")
 	setDefault("APP_UPDATE_ENABLED", false)
 	setDefault("APP_UPDATE_DOCKER_SOCKET", "/var/run/docker.sock")
 	setDefault("APP_UPDATE_DOCKER_CONTAINER", "tg-updater")
@@ -143,6 +145,7 @@ func Load() Config {
 		TelegramSyncScript:              viper.GetString("TELEGRAM_SYNC_SCRIPT"),
 		TelegramSyncTimeoutSeconds:      viper.GetInt("TELEGRAM_SYNC_TIMEOUT_SECONDS"),
 		ListenerAccountCheckConcurrency: viper.GetInt("LISTENER_ACCOUNT_CHECK_CONCURRENCY"),
+		ListenerProxyCheckConcurrency:   viper.GetInt("LISTENER_PROXY_CHECK_CONCURRENCY"),
 		TelegramApplyScript:             viper.GetString("TELEGRAM_APPLY_SCRIPT"),
 		TelegramMessageScript:           viper.GetString("TELEGRAM_MESSAGE_SCRIPT"),
 		TelegramListenScript:            viper.GetString("TELEGRAM_LISTEN_SCRIPT"),
