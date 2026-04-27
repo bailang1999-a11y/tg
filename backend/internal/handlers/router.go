@@ -152,6 +152,7 @@ func NewRouterWithTaskQueue(cfg config.Config, db *gorm.DB, auth *services.AuthS
 	protected.POST("/listener-admin/targets/refresh", middleware.RequireAdmin(), s.RefreshListenerTargets)
 	protected.POST("/listener-admin/targets/import", middleware.RequireAdmin(), s.ImportListenerTargets)
 	protected.DELETE("/listener-admin/targets/:id", middleware.RequireAdmin(), s.DeleteListenerTarget)
+	protected.POST("/listener-admin/join-targets", middleware.RequireAdmin(), s.CreateListenerJoinTargetsTask)
 	protected.GET("/listener-admin/proxies", middleware.RequireAdmin(), s.ListListenerProxies)
 	protected.POST("/listener-admin/proxies/check", middleware.RequireAdmin(), s.CheckListenerProxies)
 	protected.POST("/listener-admin/proxies/import", middleware.RequireAdmin(), s.ImportListenerProxies)

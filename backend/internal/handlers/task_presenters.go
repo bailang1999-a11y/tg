@@ -182,6 +182,8 @@ func taskTypeText(value string) string {
 		return "Bot 配置修改"
 	case "join_targets":
 		return "终端加入目标池"
+	case "listener_join_targets":
+		return "监听号自动加群"
 	case "audit_action":
 		return "操作日志"
 	default:
@@ -322,6 +324,8 @@ func taskLogActionText(value string) string {
 		return "加入目标失败"
 	case "join_skipped":
 		return "加入目标跳过"
+	case "listener_join_targets":
+		return "监听号自动加群"
 	case "adapter":
 		return "执行适配器状态"
 	case "script":

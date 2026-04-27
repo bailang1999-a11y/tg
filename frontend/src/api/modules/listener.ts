@@ -3,12 +3,14 @@ import type {
   ListenerAccount,
   ListenerAdminOverview,
   ListenerCheckSummary,
+  ListenerJoinTargetsRequest,
   ListenerProxy,
   ListenerProxyAssignment,
   ListenerProxyCheckSummary,
   ListenerTarget,
   ListenerTargetRefreshSummary,
   ProxyImportSummary,
+  Task,
   TargetImportSummary
 } from '../types'
 
@@ -41,6 +43,8 @@ export const listenerApi = {
     request<TargetImportSummary>('/api/v1/listener-admin/targets/import', { method: 'POST', body: JSON.stringify(payload) }),
   deleteListenerTarget: (id: string) =>
     request<{ deleted: number }>(`/api/v1/listener-admin/targets/${id}`, { method: 'DELETE' }),
+  createListenerJoinTargetsTask: (payload: ListenerJoinTargetsRequest) =>
+    request<{ task: Task }>('/api/v1/listener-admin/join-targets', { method: 'POST', body: JSON.stringify(payload) }),
   listenerProxies: (groupID = '') => request<ListenerProxy[]>(`/api/v1/listener-admin/proxies${groupID ? `?group_id=${groupID}` : ''}`),
   checkListenerProxies: (payload: { group_id?: string }) =>
     request<ListenerProxyCheckSummary>('/api/v1/listener-admin/proxies/check', { method: 'POST', body: JSON.stringify(payload) }),

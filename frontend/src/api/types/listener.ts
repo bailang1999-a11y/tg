@@ -87,3 +87,13 @@ export type ListenerTargetRefreshSummary = {
   failed: number
 }
 
+export type ListenerJoinTargetsRequest = {
+  account_scope: 'all' | 'group'
+  account_group_id?: string
+  target_scope: 'all' | 'group'
+  target_group_id?: string
+  daily_limit: number
+  interval_minutes: number
+  max_joins?: number
+  prefer_uncovered?: boolean
+}

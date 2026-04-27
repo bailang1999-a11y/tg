@@ -430,6 +430,10 @@ func (s *Server) dispatchRunnableTask(ctx context.Context, taskID uuid.UUID) {
 		if !s.enqueueTask(ctx, task, "run") {
 			go s.RunJoinTargetsTask(task.ID)
 		}
+	case "listener_join_targets":
+		if !s.enqueueTask(ctx, task, "run") {
+			go s.RunListenerJoinTargetsTask(task.ID)
+		}
 	case "account_status_check":
 		if !s.enqueueTask(ctx, task, "run") {
 			go s.RunCheckTerminalsTask(task.ID)

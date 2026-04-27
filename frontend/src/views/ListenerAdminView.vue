@@ -30,6 +30,25 @@
       </div>
     </GlassCard>
 
+    <GlassCard v-if="activeJoinTask" class="membership-task-card">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 class="font-bold">监听号自动加入监听群</h2>
+          <p class="mt-1 text-sm text-steel">{{ taskStatusText(activeJoinTask.status) }} · 更新 {{ formatDateTime(activeJoinTask.updated_at) }}</p>
+        </div>
+        <span class="status-pill" :data-tone="taskStatusTone(activeJoinTask.status)">{{ activeJoinTask.progress || 0 }}%</span>
+      </div>
+      <div class="progress-track mt-4">
+        <div class="progress-fill" :style="{ width: `${activeJoinTask.progress || 0}%` }"></div>
+      </div>
+      <div class="mt-4 grid gap-3 sm:grid-cols-4">
+        <div v-for="item in joinTaskSummaryCards" :key="item.label" class="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <div class="text-xs text-steel">{{ item.label }}</div>
+          <div class="mt-1 text-lg font-black text-white">{{ item.value }}</div>
+        </div>
+      </div>
+    </GlassCard>
+
     <div class="grid gap-4 md:grid-cols-4">
       <GlassCard v-for="card in cards" :key="card.label" class="metric-card p-4" :data-tone="card.tone">
         <div class="text-sm text-steel">{{ card.label }}</div>
@@ -112,6 +131,41 @@
           </select>
           <GlassButton class="w-full" variant="primary" :loading="assigning" :disabled="!assignProxyGroupID" @click="assignProxies">均匀分配代理</GlassButton>
           <div v-if="assignment" class="mini-result">成功 {{ assignment.assigned }}，跳过 {{ assignment.skipped }}</div>
+        </div>
+      </GlassCard>
+
+      <GlassCard class="upload-panel action-card" data-kind="join">
+        <div class="panel-title-row">
+          <span class="panel-icon">➕</span>
+          <div>
+            <h2>自动加监听群</h2>
+            <p>按未覆盖监听群优先，配合每日上限和间隔控制风控。</p>
+          </div>
+        </div>
+        <div class="space-y-3">
+          <select v-model="joinAccountGroupID" class="min-h-11 w-full rounded-lg px-3 text-sm">
+            <option value="">全部监听号</option>
+            <option v-for="group in accountGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+          </select>
+          <select v-model="joinTargetGroupID" class="min-h-11 w-full rounded-lg px-3 text-sm">
+            <option value="">全部监听群</option>
+            <option v-for="group in targetGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+          </select>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="limit-field">
+              <span>每号每日</span>
+              <input v-model.number="joinDailyLimit" min="1" max="200" type="number" />
+            </label>
+            <label class="limit-field">
+              <span>间隔分钟</span>
+              <input v-model.number="joinIntervalMinutes" min="1" max="1440" type="number" />
+            </label>
+          </div>
+          <label class="limit-field">
+            <span>本次最多加群</span>
+            <input v-model.number="joinMaxTargets" min="0" type="number" placeholder="0 表示全部" />
+          </label>
+          <GlassButton class="w-full" variant="primary" :loading="joiningTargets" :disabled="!accounts.length || !targets.length" @click="createListenerJoinTask">启动自动加群</GlassButton>
         </div>
       </GlassCard>
     </div>
@@ -397,6 +451,8 @@ const targetTextContent = ref('')
 const proxyTextContent = ref('')
 const assignProxyGroupID = ref('')
 const accountGroupID = ref('')
+const joinAccountGroupID = ref('')
+const joinTargetGroupID = ref('')
 const accountFilterGroupID = ref('')
 const targetFilterGroupID = ref('')
 const proxyFilterGroupID = ref('')
@@ -409,6 +465,9 @@ const proxyPage = ref(1)
 const listPageSize = 100
 const proxyProtocol = ref('socks5')
 const autoAssign = ref(true)
+const joinDailyLimit = ref(5)
+const joinIntervalMinutes = ref(30)
+const joinMaxTargets = ref(0)
 const assignment = ref<ListenerProxyAssignment | null>(null)
 const loading = ref(false)
 const pendingSaving = ref(false)
@@ -418,6 +477,7 @@ const refreshingTargets = ref(false)
 const refreshingMemberships = ref(false)
 const deletingAbnormal = ref(false)
 const assigning = ref(false)
+const joiningTargets = ref(false)
 const error = ref('')
 const message = ref('')
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -429,7 +489,9 @@ const selectedAccountIDs = ref<string[]>([])
 const selectedTargetIDs = ref<string[]>([])
 const selectedProxyIDs = ref<string[]>([])
 const activeMembershipTask = ref<Task | null>(null)
+const activeJoinTask = ref<Task | null>(null)
 let membershipTaskTimer: ReturnType<typeof window.setInterval> | null = null
+let joinTaskTimer: ReturnType<typeof window.setInterval> | null = null
 const batchDeleteConcurrency = 8
 
 const cards = computed(() => [
@@ -445,6 +507,15 @@ const membershipTaskSummaryCards = computed(() => {
     { label: '仍有效', value: numericSummary(summary, 'active') },
     { label: '已移除', value: numericSummary(summary, 'removed') },
     { label: '待复查', value: numericSummary(summary, 'skipped') + numericSummary(summary, 'failed') }
+  ]
+})
+const joinTaskSummaryCards = computed(() => {
+  const summary = activeJoinTask.value?.summary || {}
+  return [
+    { label: '目标数', value: numericSummary(summary, 'total') },
+    { label: '成功', value: numericSummary(summary, 'success') },
+    { label: '失败', value: numericSummary(summary, 'failed') },
+    { label: '跳过', value: numericSummary(summary, 'skipped') }
   ]
 })
 
@@ -783,6 +854,33 @@ async function assignProxies() {
   }
 }
 
+async function createListenerJoinTask() {
+  joiningTargets.value = true
+  message.value = ''
+  error.value = ''
+  try {
+    const res = await api.createListenerJoinTargetsTask({
+      account_scope: joinAccountGroupID.value ? 'group' : 'all',
+      account_group_id: joinAccountGroupID.value,
+      target_scope: joinTargetGroupID.value ? 'group' : 'all',
+      target_group_id: joinTargetGroupID.value,
+      daily_limit: boundedNumber(joinDailyLimit.value, 1, 200, 5),
+      interval_minutes: boundedNumber(joinIntervalMinutes.value, 1, 1440, 30),
+      max_joins: Math.max(0, Number(joinMaxTargets.value) || 0),
+      prefer_uncovered: true
+    })
+    trackJoinTask(res.task)
+    ui.toast({
+      title: '自动加群已启动',
+      message: `任务 ${res.task.id} 会优先加入还没有监听号覆盖的监听群。`,
+      tone: 'success'
+    })
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '启动自动加群失败'
+    joiningTargets.value = false
+  }
+}
+
 async function checkAccounts() {
   checkingAccounts.value = true
   message.value = ''
@@ -841,6 +939,13 @@ function trackMembershipTask(task: Task) {
   membershipTaskTimer = window.setInterval(pollMembershipTask, 2500)
 }
 
+function trackJoinTask(task: Task) {
+  activeJoinTask.value = task
+  joiningTargets.value = true
+  if (joinTaskTimer) window.clearInterval(joinTaskTimer)
+  joinTaskTimer = window.setInterval(pollJoinTask, 2500)
+}
+
 async function pollMembershipTask() {
   const taskID = activeMembershipTask.value?.id
   if (!taskID) {
@@ -872,6 +977,39 @@ function stopMembershipTaskPolling() {
     membershipTaskTimer = null
   }
   refreshingMemberships.value = false
+}
+
+async function pollJoinTask() {
+  const taskID = activeJoinTask.value?.id
+  if (!taskID) {
+    stopJoinTaskPolling()
+    return
+  }
+  try {
+    const tasks = await api.tasks({ type: 'listener_join_targets', limit: 50 })
+    const next = tasks.find((task) => task.id === taskID)
+    if (next) activeJoinTask.value = next
+    if (next && isTaskFinished(next.status)) {
+      stopJoinTaskPolling()
+      await load()
+      ui.toast({
+        title: '自动加群完成',
+        message: joinTaskDoneMessage(next),
+        tone: next.status === 'failed' ? 'error' : 'success'
+      })
+    }
+  } catch (err) {
+    stopJoinTaskPolling()
+    error.value = err instanceof Error ? err.message : '读取自动加群进度失败'
+  }
+}
+
+function stopJoinTaskPolling() {
+  if (joinTaskTimer) {
+    window.clearInterval(joinTaskTimer)
+    joinTaskTimer = null
+  }
+  joiningTargets.value = false
 }
 
 async function checkProxies() {
@@ -1082,6 +1220,11 @@ function membershipTaskDoneMessage(task: Task) {
   return `有效 ${numericSummary(summary, 'active')}，移除 ${numericSummary(summary, 'removed')}，待复查 ${numericSummary(summary, 'skipped') + numericSummary(summary, 'failed')}。`
 }
 
+function joinTaskDoneMessage(task: Task) {
+  const summary = task.summary || {}
+  return `成功 ${numericSummary(summary, 'success')}，失败 ${numericSummary(summary, 'failed')}，跳过 ${numericSummary(summary, 'skipped')}。`
+}
+
 async function resumeMembershipTask() {
   try {
     const tasks = await api.tasks({ type: 'target_membership_refresh', limit: 50 })
@@ -1093,6 +1236,22 @@ async function resumeMembershipTask() {
   } catch {
     // 页面恢复任务失败不阻塞主列表加载。
   }
+}
+
+async function resumeJoinTask() {
+  try {
+    const tasks = await api.tasks({ type: 'listener_join_targets', limit: 50 })
+    const running = tasks.find((task) => !isTaskFinished(task.status))
+    if (running) trackJoinTask(running)
+  } catch {
+    // 页面恢复任务失败不阻塞主列表加载。
+  }
+}
+
+function boundedNumber(value: number, min: number, max: number, fallback: number) {
+  const next = Number(value)
+  if (!Number.isFinite(next)) return fallback
+  return Math.min(max, Math.max(min, Math.trunc(next)))
 }
 
 function formatDateTime(value?: string) {
@@ -1124,8 +1283,12 @@ watch(proxyPageCount, (count) => {
 onMounted(async () => {
   await load()
   await resumeMembershipTask()
+  await resumeJoinTask()
 })
-onUnmounted(stopMembershipTaskPolling)
+onUnmounted(() => {
+  stopMembershipTaskPolling()
+  stopJoinTaskPolling()
+})
 </script>
 
 <style scoped>
@@ -1158,12 +1321,34 @@ onUnmounted(stopMembershipTaskPolling)
 .action-card[data-kind='assign']::before {
   background: radial-gradient(circle at 0 0, rgba(52, 211, 153, .22), transparent 34%);
 }
+.action-card[data-kind='join']::before {
+  background: radial-gradient(circle at 0 0, rgba(56, 189, 248, .22), transparent 34%);
+}
 .panel-title-row { display: flex; align-items: flex-start; gap: 12px; }
 .panel-title-row h2, .list-toolbar h2 { margin: 0; font-weight: 900; }
 .panel-title-row p, .list-toolbar p { margin: 4px 0 0; color: var(--app-text-muted); font-size: 13px; line-height: 1.6; }
 .panel-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 8px; background: rgba(255,255,255,.08); color: var(--accent-cyan); box-shadow: inset 0 1px rgba(255,255,255,.12); }
 .action-card[data-kind='target'] .panel-icon { color: var(--accent-pink); }
 .action-card[data-kind='proxy'] .panel-icon { color: var(--accent-warning); }
+.action-card[data-kind='join'] .panel-icon { color: var(--accent-cyan); }
+.limit-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--app-text-muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+.limit-field input {
+  min-height: 44px;
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.12);
+  background: rgba(8, 15, 30, .72);
+  color: #fff;
+  padding: 0 12px;
+  font-size: 14px;
+}
 .action-card[data-kind='assign'] .panel-icon { color: var(--accent-success); }
 .drop-zone { margin: 16px 0; display: grid; min-height: 132px; place-items: center; gap: 7px; text-align: center; border: 1px dashed rgba(79,172,254,.45); border-radius: 8px; background: linear-gradient(135deg, rgba(34,197,94,.1), rgba(79,172,254,.08)); cursor: pointer; }
 .drop-zone:hover { transform: translateY(-2px); border-color: rgba(0,242,254,.8); box-shadow: 0 14px 34px rgba(34,211,238,.14); }

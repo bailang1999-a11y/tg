@@ -55,6 +55,9 @@ func main() {
 		case "join_targets":
 			server.RunJoinTargetsTask(msg.TaskID)
 			return nil
+		case "listener_join_targets":
+			server.RunListenerJoinTargetsTask(msg.TaskID)
+			return nil
 		case "account_status_check":
 			server.RunCheckTerminalsTask(msg.TaskID)
 			return nil
