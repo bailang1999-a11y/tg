@@ -99,6 +99,15 @@ def resolve_tdata_root(base_dir: str) -> str:
     for root, _, files in os.walk(base_dir):
         if "key_data" in files:
             return root
+        if "key_datas" in files:
+            legacy_path = os.path.join(root, "key_datas")
+            normalized_path = os.path.join(root, "key_data")
+            try:
+                with open(legacy_path, "rb") as src, open(normalized_path, "wb") as dst:
+                    dst.write(src.read())
+            except OSError:
+                pass
+            return root
     return base_dir
 
 
