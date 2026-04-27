@@ -223,6 +223,7 @@
             <option v-for="group in accountGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
           </select>
           <span class="status-pill" data-tone="info">显示 {{ pagedAccounts.length }} / {{ filteredAccounts.length }}</span>
+          <GlassButton variant="ghost" :loading="healthSettingsLoading && healthSettingsMode === 'account'" @click="openHealthSettings('account')">定时设置</GlassButton>
           <GlassButton variant="danger" :disabled="!selectedAccountIDs.length" @click="deleteSelected('account')">删除已选 {{ selectedAccountIDs.length }}</GlassButton>
           <GlassButton variant="secondary" :loading="checkingAccounts" @click="checkAccounts">一键检测监听账号状态</GlassButton>
           <GlassButton variant="danger" :loading="deletingAbnormal" @click="deleteAbnormalAccounts">一键删除异常账号</GlassButton>
@@ -357,6 +358,7 @@
               <option v-for="group in proxyGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
             </select>
             <span class="status-pill" data-tone="info">显示 {{ pagedProxies.length }} / {{ filteredProxies.length }}</span>
+            <GlassButton variant="ghost" :loading="healthSettingsLoading && healthSettingsMode === 'proxy'" @click="openHealthSettings('proxy')">定时设置</GlassButton>
             <GlassButton variant="secondary" :loading="checkingProxies" @click="checkProxies">一键检测代理延迟</GlassButton>
             <GlassButton variant="danger" :loading="deletingProxyGroup" :disabled="!proxyFilterGroupID" @click="deleteCurrentProxyGroup">删除当前分组</GlassButton>
             <GlassButton variant="danger" :disabled="!selectedProxyIDs.length" @click="deleteSelected('proxy')">删除已选 {{ selectedProxyIDs.length }}</GlassButton>
@@ -473,19 +475,68 @@
       </Transition>
     </Teleport>
 
+    <Teleport to="body">
+      <Transition name="dialog">
+        <div v-if="healthSettingsOpen" class="modal-backdrop" @click.self="closeHealthSettings">
+          <div class="modal-card p-6 lg:p-7">
+            <div class="panel-title-row mb-5">
+              <span class="panel-icon">⌁</span>
+              <div>
+                <h2 class="text-xl font-black text-white">{{ healthSettingsTitle }}</h2>
+                <p class="text-sm text-steel">保存后调度器会自动创建对应检测任务，任务中心和日志中心会显示进度与结果。</p>
+              </div>
+            </div>
+            <div class="space-y-3">
+              <label class="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div>
+                  <div class="font-semibold">自动刷新监听账号状态</div>
+                  <div class="mt-1 text-sm text-steel">周期性创建“一键检测监听账号状态”任务</div>
+                </div>
+                <input v-model="healthSettingsForm.autoAccountCheckEnabled" type="checkbox" class="h-5 w-5" />
+              </label>
+              <label class="rounded-2xl border border-white/10 bg-white/5 p-4" :class="{ 'settings-focus': healthSettingsMode === 'account' }">
+                <div class="text-sm text-steel">账号状态检测周期（分钟）</div>
+                <input v-model.number="healthSettingsForm.accountCheckIntervalMinutes" type="number" min="5" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              </label>
+              <label class="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                <div>
+                  <div class="font-semibold">自动刷新代理列表延迟</div>
+                  <div class="mt-1 text-sm text-steel">周期性检测代理入口、真实出口、Web 和客户端连通性</div>
+                </div>
+                <input v-model="healthSettingsForm.autoProxyCheckEnabled" type="checkbox" class="h-5 w-5" />
+              </label>
+              <label class="rounded-2xl border border-white/10 bg-white/5 p-4" :class="{ 'settings-focus': healthSettingsMode === 'proxy' }">
+                <div class="text-sm text-steel">代理列表检测周期（分钟）</div>
+                <input v-model.number="healthSettingsForm.proxyCheckIntervalMinutes" type="number" min="5" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              </label>
+              <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div class="text-sm text-steel">无消息提醒阈值（分钟）</div>
+                <input v-model.number="healthSettingsForm.silenceAlertMinutes" type="number" min="1" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              </label>
+            </div>
+            <div class="mt-7 flex flex-wrap justify-end gap-3">
+              <GlassButton variant="ghost" @click="closeHealthSettings">取消</GlassButton>
+              <GlassButton variant="primary" :loading="healthSettingsSaving" @click="saveHealthSettings">保存定时设置</GlassButton>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <p v-if="message" class="rounded-lg border border-neon/30 bg-neon/10 px-4 py-3 text-sm text-neon">{{ message }}</p>
     <p v-if="error" class="rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">{{ error }}</p>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import GlassButton from '../components/GlassButton.vue'
 import GlassCard from '../components/GlassCard.vue'
 import { useUiStore } from '../stores/ui'
-import { api, type Group, type ListenerAccount, type ListenerAdminOverview, type ListenerProxy, type ListenerProxyAssignment, type ListenerTarget, type Task } from '../api/client'
+import { api, type Group, type ListenerAccount, type ListenerAdminOverview, type ListenerProxy, type ListenerProxyAssignment, type ListenerTarget, type SystemSettings, type Task } from '../api/client'
 
 type ImportKind = 'account' | 'target' | 'proxy'
+type HealthSettingsMode = 'account' | 'proxy'
 type PendingImport = {
   kind: ImportKind
   title: string
@@ -559,6 +610,18 @@ const pendingGroupName = ref('')
 const selectedAccountIDs = ref<string[]>([])
 const selectedTargetIDs = ref<string[]>([])
 const selectedProxyIDs = ref<string[]>([])
+const healthSettingsOpen = ref(false)
+const healthSettingsMode = ref<HealthSettingsMode>('account')
+const healthSettingsLoading = ref(false)
+const healthSettingsSaving = ref(false)
+const healthSettingsPayload = ref<SystemSettings | null>(null)
+const healthSettingsForm = reactive({
+  autoAccountCheckEnabled: true,
+  accountCheckIntervalMinutes: 60,
+  autoProxyCheckEnabled: true,
+  proxyCheckIntervalMinutes: 60,
+  silenceAlertMinutes: 15
+})
 const activeAccountTask = ref<Task | null>(null)
 const activeMembershipTask = ref<Task | null>(null)
 const activeJoinTask = ref<Task | null>(null)
@@ -611,6 +674,8 @@ const proxyTaskSummaryCards = computed(() => {
     { label: '超时', value: numericSummary(summary, 'timeout') }
   ]
 })
+
+const healthSettingsTitle = computed(() => healthSettingsMode.value === 'account' ? '监听账号定时检测设置' : '代理列表定时检测设置')
 
 const filteredAccounts = computed(() => {
   const keyword = normalizeKeyword(accountKeyword.value)
@@ -939,6 +1004,77 @@ function showImportToast(label: string, success: number, duplicate: number, fail
     tone: failed > 0 || warning ? 'warning' : 'success',
     duration: 5200
   })
+}
+
+async function openHealthSettings(mode: HealthSettingsMode) {
+  healthSettingsMode.value = mode
+  healthSettingsLoading.value = true
+  try {
+    const settings = await api.systemSettings()
+    healthSettingsPayload.value = settings
+    applyHealthSettings(settings)
+    healthSettingsOpen.value = true
+  } catch (err) {
+    ui.toast({
+      title: '读取定时设置失败',
+      message: err instanceof Error ? err.message : '请求失败',
+      tone: 'error'
+    })
+  } finally {
+    healthSettingsLoading.value = false
+  }
+}
+
+function closeHealthSettings() {
+  if (healthSettingsSaving.value) return
+  healthSettingsOpen.value = false
+}
+
+function applyHealthSettings(settings: SystemSettings) {
+  healthSettingsForm.autoAccountCheckEnabled = settings.listener_health?.auto_account_check_enabled ?? true
+  healthSettingsForm.accountCheckIntervalMinutes = settings.listener_health?.account_check_interval_minutes ?? 60
+  healthSettingsForm.autoProxyCheckEnabled = settings.listener_health?.auto_proxy_check_enabled ?? true
+  healthSettingsForm.proxyCheckIntervalMinutes = settings.listener_health?.proxy_check_interval_minutes ?? 60
+  healthSettingsForm.silenceAlertMinutes = settings.listener_health?.silence_alert_minutes ?? 15
+}
+
+async function saveHealthSettings() {
+  const settings = healthSettingsPayload.value
+  if (!settings) return
+  healthSettingsSaving.value = true
+  try {
+    const payload = {
+      security: { ...settings.security },
+      frequency: { ...settings.frequency },
+      listener_health: {
+        auto_account_check_enabled: healthSettingsForm.autoAccountCheckEnabled,
+        account_check_interval_minutes: boundedNumber(healthSettingsForm.accountCheckIntervalMinutes, 5, 1440, 60),
+        auto_proxy_check_enabled: healthSettingsForm.autoProxyCheckEnabled,
+        proxy_check_interval_minutes: boundedNumber(healthSettingsForm.proxyCheckIntervalMinutes, 5, 1440, 60),
+        silence_alert_minutes: boundedNumber(healthSettingsForm.silenceAlertMinutes, 1, 1440, 15)
+      },
+      audit: { ...settings.audit },
+      adapter: { ...settings.adapter },
+      risk_control: { ...settings.risk_control }
+    }
+    const saved = await api.updateSystemSettings(payload)
+    healthSettingsPayload.value = saved
+    applyHealthSettings(saved)
+    healthSettingsOpen.value = false
+    ui.toast({
+      title: '定时设置已保存',
+      message: `监听账号 ${payload.listener_health.account_check_interval_minutes} 分钟，代理列表 ${payload.listener_health.proxy_check_interval_minutes} 分钟`,
+      tone: 'success'
+    })
+  } catch (err) {
+    ui.toast({
+      title: '保存定时设置失败',
+      message: err instanceof Error ? err.message : '请求失败',
+      tone: 'error'
+    })
+  } finally {
+    healthSettingsSaving.value = false
+  }
 }
 
 async function assignProxies() {
@@ -1845,6 +1981,11 @@ onUnmounted(() => {
 }
 .country-badge {
   color: #dbeafe;
+}
+.settings-focus {
+  border-color: rgba(34,211,238,.42) !important;
+  background: rgba(34,211,238,.1) !important;
+  box-shadow: inset 0 1px rgba(255,255,255,.1), 0 0 0 1px rgba(34,211,238,.12);
 }
 .empty-cell { text-align: center; color: var(--app-text-muted); padding: 30px !important; }
 @media (max-width: 1280px) { .listener-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
