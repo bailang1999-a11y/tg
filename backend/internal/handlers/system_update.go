@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,15 +38,19 @@ type githubReleaseResponse struct {
 	HTMLURL string `json:"html_url"`
 }
 
+type githubTagResponse struct {
+	Name string `json:"name"`
+}
+
 func (s *Server) GetSystemVersion(c *gin.Context) {
-	latestVersion, latestURL := s.fetchLatestRelease(c.Request.Context())
+	latestVersion, latestURL := s.fetchLatestVersion(c.Request.Context())
 	current := normalizeVersion(s.cfg.AppVersion)
 	latest := normalizeVersion(latestVersion)
 	utils.OK(c, systemVersionResponse{
 		CurrentVersion:  firstNonEmpty(current, "unknown"),
 		LatestVersion:   firstNonEmpty(latest, current, "unknown"),
 		LatestURL:       latestURL,
-		UpdateAvailable: current != "" && latest != "" && current != latest,
+		UpdateAvailable: current != "" && latest != "" && compareVersions(current, latest) < 0,
 		UpdateEnabled:   s.cfg.UpdateEnabled,
 	})
 }
@@ -75,6 +81,15 @@ func (s *Server) StartSystemUpdate(c *gin.Context) {
 	})
 }
 
+func (s *Server) fetchLatestVersion(ctx context.Context) (string, string) {
+	releaseVersion, releaseURL := s.fetchLatestRelease(ctx)
+	tagVersion, tagURL := s.fetchLatestTag(ctx)
+	if compareVersions(releaseVersion, tagVersion) >= 0 {
+		return releaseVersion, releaseURL
+	}
+	return tagVersion, tagURL
+}
+
 func (s *Server) fetchLatestRelease(ctx context.Context) (string, string) {
 	url := strings.TrimSpace(s.cfg.UpdateLatestReleaseURL)
 	if url == "" {
@@ -101,6 +116,45 @@ func (s *Server) fetchLatestRelease(ctx context.Context) (string, string) {
 		return "", ""
 	}
 	return release.TagName, release.HTMLURL
+}
+
+func (s *Server) fetchLatestTag(ctx context.Context) (string, string) {
+	releaseURL := strings.TrimSpace(s.cfg.UpdateLatestReleaseURL)
+	if releaseURL == "" {
+		return "", ""
+	}
+	tagsURL := strings.Replace(releaseURL, "/releases/latest", "/tags", 1)
+	reqCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, tagsURL, nil)
+	if err != nil {
+		return "", ""
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "TG-Marketing-Assistant")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", ""
+	}
+	var tags []githubTagResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return "", ""
+	}
+	var latest string
+	for _, tag := range tags {
+		name := strings.TrimSpace(tag.Name)
+		if name == "" {
+			continue
+		}
+		if latest == "" || compareVersions(latest, name) < 0 {
+			latest = name
+		}
+	}
+	return latest, githubTagURL(releaseURL, latest)
 }
 
 func (s *Server) dockerClient() *http.Client {
@@ -169,4 +223,60 @@ func normalizeVersion(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.TrimPrefix(value, "v")
 	return value
+}
+
+func compareVersions(left string, right string) int {
+	leftParts := versionParts(left)
+	rightParts := versionParts(right)
+	maxLen := len(leftParts)
+	if len(rightParts) > maxLen {
+		maxLen = len(rightParts)
+	}
+	for i := 0; i < maxLen; i++ {
+		leftValue := 0
+		rightValue := 0
+		if i < len(leftParts) {
+			leftValue = leftParts[i]
+		}
+		if i < len(rightParts) {
+			rightValue = rightParts[i]
+		}
+		if leftValue > rightValue {
+			return 1
+		}
+		if leftValue < rightValue {
+			return -1
+		}
+	}
+	return 0
+}
+
+func versionParts(value string) []int {
+	value = normalizeVersion(value)
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r < '0' || r > '9'
+	})
+	parts := make([]int, 0, len(fields))
+	for _, field := range fields {
+		number, err := strconv.Atoi(field)
+		if err == nil {
+			parts = append(parts, number)
+		}
+	}
+	return parts
+}
+
+func githubTagURL(apiReleaseURL string, tag string) string {
+	if tag == "" {
+		return ""
+	}
+	parsed, err := url.Parse(apiReleaseURL)
+	if err != nil {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 3 || parts[0] != "repos" {
+		return ""
+	}
+	return fmt.Sprintf("https://github.com/%s/%s/releases/tag/%s", parts[1], parts[2], tag)
 }
