@@ -25,6 +25,10 @@ from telethon.tl.types import (
 from telegram_proxy import telethon_proxy_from_json, telethon_use_ipv6_from_json
 
 
+TELEGRAM_CONNECT_TIMEOUT_SECONDS = 20
+TELEGRAM_CONNECT_RETRIES = 1
+
+
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
 
@@ -148,10 +152,14 @@ async def inspect_session(file_path: str, avatar_dir: str, proxy_config=None, us
         receive_updates=False,
         proxy=proxy_config,
         use_ipv6=use_ipv6,
+        timeout=TELEGRAM_CONNECT_TIMEOUT_SECONDS,
+        connection_retries=TELEGRAM_CONNECT_RETRIES,
+        retry_delay=1,
+        request_retries=TELEGRAM_CONNECT_RETRIES,
     )
 
     try:
-        await client.connect()
+        await asyncio.wait_for(client.connect(), timeout=TELEGRAM_CONNECT_TIMEOUT_SECONDS + 5)
         if not await client.is_user_authorized():
             result["reason"] = "会话未授权，需要重新登录"
             result["risk_status"] = "需重新登录"
@@ -221,10 +229,14 @@ async def inspect_tdata(file_path: str, avatar_dir: str, proxy_config=None, use_
             api=API.TelegramDesktop,
             receive_updates=False,
             use_ipv6=use_ipv6,
+            timeout=TELEGRAM_CONNECT_TIMEOUT_SECONDS,
+            connection_retries=TELEGRAM_CONNECT_RETRIES,
+            retry_delay=1,
+            request_retries=TELEGRAM_CONNECT_RETRIES,
         )
         if proxy_config:
             client.set_proxy(proxy_config)
-        await client.connect()
+        await asyncio.wait_for(client.connect(), timeout=TELEGRAM_CONNECT_TIMEOUT_SECONDS + 5)
         if not await client.is_user_authorized():
             result["reason"] = "tdata 会话未授权，需要重新导入"
             result["risk_status"] = "需重新导入"
@@ -297,7 +309,16 @@ async def main() -> int:
         emit(result)
         return 0
     except Exception as exc:
-        result["reason"] = str(exc)
+        reason = str(exc)
+        lower_reason = reason.lower()
+        if proxy_config and isinstance(exc, asyncio.TimeoutError):
+            result["risk_status"] = "代理连接超时"
+            result["reason"] = "通过绑定代理连接 Telegram 超时"
+        elif proxy_config and ("authorization key" in lower_reason or "authkeynotfound" in lower_reason or "auth key" in lower_reason):
+            result["risk_status"] = "代理链路异常"
+            result["reason"] = "代理出口与当前 tdata 会话不匹配，Telegram 拒绝该授权密钥"
+        else:
+            result["reason"] = reason
         emit(result)
         return 0
 
