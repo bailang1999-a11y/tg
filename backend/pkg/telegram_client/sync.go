@@ -73,7 +73,7 @@ func NewInspector(cfg config.Config) Inspector {
 	scriptPath := resolveInspectorPath(root, cfg.TelegramSyncScript, "scripts/telegram_profile_sync.py")
 	timeout := time.Duration(cfg.TelegramSyncTimeoutSeconds) * time.Second
 	if timeout <= 0 {
-		timeout = 25 * time.Second
+		timeout = 90 * time.Second
 	}
 	return Inspector{
 		pythonPath: pythonPath,
@@ -151,6 +151,7 @@ func (i Inspector) Sync(ctx context.Context, req SyncRequest) (SyncResult, error
 		if strings.TrimSpace(result.Reason) == "" {
 			result.Reason = "资料同步超时"
 		}
+		result.RiskStatus = "检测超时"
 		return result, errors.New(result.Reason)
 	}
 	if runErr != nil {

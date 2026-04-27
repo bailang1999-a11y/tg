@@ -392,6 +392,8 @@ func (s *Server) runListenerAccountCheckTask(ctx context.Context, task models.Ta
 				reason = syncErr.Error()
 				if account.ProxyID != nil && listenerAccountProxyFailure(reason) {
 					riskStatus = "代理不可用"
+				} else if strings.Contains(reason, "资料同步超时") || strings.Contains(strings.ToLower(reason), "deadline exceeded") {
+					riskStatus = "检测超时"
 				}
 			}
 			if avatarDir != "" {
