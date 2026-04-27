@@ -344,7 +344,7 @@
           </div>
         </div>
         <div class="table-scroll">
-          <table class="matrix-table min-w-[1080px]">
+          <table class="matrix-table min-w-[1160px]">
             <thead>
               <tr>
                 <th class="select-col">
@@ -358,7 +358,8 @@
                 <th>出口 IP</th>
                 <th>延迟</th>
                 <th>出口状态</th>
-                <th>Telegram</th>
+                <th>Web</th>
+                <th>客户端</th>
                 <th>地理位置</th>
                 <th>绑定终端数</th>
                 <th>操作</th>
@@ -388,7 +389,13 @@
                   </span>
                 </td>
                 <td>
-                  <span class="latency-badge" :data-tone="proxyTelegramTone(item)" :title="item.telegram_error || ''">
+                  <span class="latency-badge" :data-tone="proxyWebTone(item)" :title="item.web_error || '检测 web.telegram.org/k/'">
+                    <i>{{ proxyWebIcon(item) }}</i>
+                    {{ proxyWebText(item) }}
+                  </span>
+                </td>
+                <td>
+                  <span class="latency-badge" :data-tone="proxyTelegramTone(item)" :title="item.telegram_error || '检测 Telegram 客户端 DC 连接'">
                     <i>{{ proxyTelegramIcon(item) }}</i>
                     {{ proxyTelegramText(item) }}
                   </span>
@@ -407,7 +414,7 @@
                 </td>
                 <td><GlassButton variant="danger" size="sm" @click="deleteItem('proxy', item.id)">删除</GlassButton></td>
               </tr>
-              <tr v-if="!filteredProxies.length"><td colspan="11" class="empty-cell">暂无监听代理</td></tr>
+              <tr v-if="!filteredProxies.length"><td colspan="12" class="empty-cell">暂无监听代理</td></tr>
             </tbody>
           </table>
         </div>
@@ -1471,6 +1478,28 @@ function proxyExitStatusText(item: ListenerProxy) {
   const tone = proxyExitTone(item)
   if (tone === 'good') return '通'
   if (tone === 'bad') return '不通'
+  return '待检测'
+}
+
+function proxyWebTone(item: ListenerProxy) {
+  const status = (item.web_status || '').toLowerCase()
+  if (status === 'normal') return 'good'
+  if (status === 'failed' || status === 'timeout') return 'bad'
+  return 'unknown'
+}
+
+function proxyWebIcon(item: ListenerProxy) {
+  const tone = proxyWebTone(item)
+  if (tone === 'good') return '●'
+  if (tone === 'bad') return '×'
+  return '○'
+}
+
+function proxyWebText(item: ListenerProxy) {
+  const status = (item.web_status || '').toLowerCase()
+  if (status === 'normal') return '通'
+  if (status === 'timeout') return '超时'
+  if (status === 'failed') return '不通'
   return '待检测'
 }
 

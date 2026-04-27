@@ -61,6 +61,8 @@ type ListenerProxy struct {
 	LatencyMS      int        `json:"latency_ms"`
 	Country        string     `json:"country" gorm:"size:80"`
 	Flag           string     `json:"flag" gorm:"size:16"`
+	WebStatus      string     `json:"web_status" gorm:"size:30;index"`
+	WebError       string     `json:"web_error" gorm:"size:255"`
 	TelegramStatus string     `json:"telegram_status" gorm:"size:30;index"`
 	TelegramError  string     `json:"telegram_error" gorm:"size:255"`
 	BoundAccounts  int64      `json:"bound_accounts"`
