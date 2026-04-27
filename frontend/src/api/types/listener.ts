@@ -58,6 +58,8 @@ export type ListenerProxy = {
   latency_ms?: number
   country: string
   flag: string
+  telegram_status?: string
+  telegram_error?: string
   bound_accounts: number
   bound_display?: string
   location_display?: string

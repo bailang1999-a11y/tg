@@ -48,21 +48,23 @@ type ListenerTarget struct {
 }
 
 type ListenerProxy struct {
-	ID            uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey"`
-	TenantID      uuid.UUID  `json:"tenant_id" gorm:"type:uuid;index;not null"`
-	GroupID       *uuid.UUID `json:"group_id" gorm:"type:uuid;index"`
-	Code          string     `json:"code" gorm:"size:60;index"`
-	IP            string     `json:"ip" gorm:"size:80;index"`
-	Port          int        `json:"port"`
-	Protocol      string     `json:"protocol" gorm:"size:20;index"`
-	Username      string     `json:"username" gorm:"size:120"`
-	Password      string     `json:"-" gorm:"size:255"`
-	ExitIP        string     `json:"exit_ip" gorm:"size:80"`
-	LatencyMS     int        `json:"latency_ms"`
-	Country       string     `json:"country" gorm:"size:80"`
-	Flag          string     `json:"flag" gorm:"size:16"`
-	BoundAccounts int64      `json:"bound_accounts"`
-	Status        string     `json:"status" gorm:"size:30;index"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID             uuid.UUID  `json:"id" gorm:"type:uuid;primaryKey"`
+	TenantID       uuid.UUID  `json:"tenant_id" gorm:"type:uuid;index;not null"`
+	GroupID        *uuid.UUID `json:"group_id" gorm:"type:uuid;index"`
+	Code           string     `json:"code" gorm:"size:60;index"`
+	IP             string     `json:"ip" gorm:"size:80;index"`
+	Port           int        `json:"port"`
+	Protocol       string     `json:"protocol" gorm:"size:20;index"`
+	Username       string     `json:"username" gorm:"size:120"`
+	Password       string     `json:"-" gorm:"size:255"`
+	ExitIP         string     `json:"exit_ip" gorm:"size:80"`
+	LatencyMS      int        `json:"latency_ms"`
+	Country        string     `json:"country" gorm:"size:80"`
+	Flag           string     `json:"flag" gorm:"size:16"`
+	TelegramStatus string     `json:"telegram_status" gorm:"size:30;index"`
+	TelegramError  string     `json:"telegram_error" gorm:"size:255"`
+	BoundAccounts  int64      `json:"bound_accounts"`
+	Status         string     `json:"status" gorm:"size:30;index"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }

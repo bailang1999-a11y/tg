@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +27,7 @@ import (
 
 const listenerProxyProbeTarget = "www.gstatic.com:80"
 const listenerHTTPProxyProbeURL = "http://www.gstatic.com/generate_204"
+const listenerTelegramProbeTarget = "149.154.167.50:443"
 
 var listenerProxyExitLookupURLs = []string{
 	"http://api.ipify.org?format=json",
@@ -314,12 +317,19 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 				phone = firstNonEmpty(syncResult.Phone, phone)
 				nickname = firstNonEmpty(syncResult.Nickname, nickname)
 				riskStatus = firstNonEmpty(syncResult.RiskStatus, riskStatus)
+				if account.ProxyID != nil && listenerAccountProxyFailure(reason) {
+					status = "abnormal"
+					riskStatus = "代理不可用"
+				}
 				lastOnlineAt = syncResult.LastOnlineAt
 				avatarURL, reason = s.persistTerminalAvatar(tenantID, models.Terminal{ID: account.ID}, avatarURL, syncResult, reason)
 			} else {
 				status = "abnormal"
 				riskStatus = "检测失败"
 				reason = syncErr.Error()
+				if account.ProxyID != nil && listenerAccountProxyFailure(reason) {
+					riskStatus = "代理不可用"
+				}
 			}
 			if avatarDir != "" {
 				_ = os.RemoveAll(avatarDir)
@@ -517,6 +527,11 @@ func (s *Server) runListenerProxyCheckTask(ctx context.Context, task models.Task
 				flag = exit.Flag
 			}
 		}
+		telegramStatus := "untested"
+		telegramError := ""
+		if status == "normal" {
+			telegramStatus, telegramError = measureTelegramProxy(item)
+		}
 		switch status {
 		case "normal":
 			summary.Normal++
@@ -526,18 +541,20 @@ func (s *Server) runListenerProxyCheckTask(ctx context.Context, task models.Task
 			summary.Failed++
 		}
 		if err := s.db.WithContext(ctx).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", task.TenantID, item.ID).Updates(map[string]any{
-			"latency_ms": latency,
-			"status":     status,
-			"exit_ip":    exitIP,
-			"country":    country,
-			"flag":       flag,
-			"updated_at": time.Now(),
+			"latency_ms":      latency,
+			"status":          status,
+			"exit_ip":         exitIP,
+			"country":         country,
+			"flag":            flag,
+			"telegram_status": telegramStatus,
+			"telegram_error":  telegramError,
+			"updated_at":      time.Now(),
 		}).Error; err != nil {
 			summary.Failed++
 			s.finishListenerProxyCheckTask(ctx, task, "failed", summary, "更新代理延迟失败："+err.Error())
 			return
 		}
-		detail := listenerProxyCheckLogDetail(item, status, latency, exitIP, country)
+		detail := listenerProxyCheckLogDetail(item, status, latency, exitIP, country, telegramStatus, telegramError)
 		level := "INFO"
 		if status == "timeout" {
 			level = "WARN"
@@ -571,7 +588,7 @@ func (s *Server) finishListenerProxyCheckTask(ctx context.Context, task models.T
 	_ = s.createTaskLog(ctx, task, level, "summary", detail, "", "")
 }
 
-func listenerProxyCheckLogDetail(item models.ListenerProxy, status string, latency int64, exitIP string, country string) string {
+func listenerProxyCheckLogDetail(item models.ListenerProxy, status string, latency int64, exitIP string, country string, telegramStatus string, telegramError string) string {
 	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
 	switch status {
 	case "normal":
@@ -582,7 +599,18 @@ func listenerProxyCheckLogDetail(item models.ListenerProxy, status string, laten
 				exitText += "，位置 " + strings.TrimSpace(country)
 			}
 		}
-		return fmt.Sprintf("%s %s 检测正常，延迟 %d ms，%s", strings.ToUpper(item.Protocol), address, latency, exitText)
+		telegramText := "Telegram 未检测"
+		if telegramStatus == "normal" {
+			telegramText = "Telegram 可用"
+		} else if telegramStatus == "timeout" {
+			telegramText = "Telegram 超时"
+		} else if telegramStatus == "failed" {
+			telegramText = "Telegram 不通"
+			if strings.TrimSpace(telegramError) != "" {
+				telegramText += "：" + strings.TrimSpace(telegramError)
+			}
+		}
+		return fmt.Sprintf("%s %s 检测正常，延迟 %d ms，%s，%s", strings.ToUpper(item.Protocol), address, latency, exitText, telegramText)
 	case "timeout":
 		return fmt.Sprintf("%s %s 检测超时，请检查代理是否可连、端口是否开放或账号密码是否正确", strings.ToUpper(item.Protocol), address)
 	default:
@@ -678,6 +706,86 @@ func measureHTTPProxy(item models.ListenerProxy) (int64, string) {
 	return elapsed, "normal"
 }
 
+func measureTelegramProxy(item models.ListenerProxy) (string, string) {
+	protocol := strings.ToLower(strings.TrimSpace(item.Protocol))
+	switch protocol {
+	case "socks5", "sk5":
+		return measureTelegramSOCKS5Proxy(item)
+	case "http", "https":
+		return measureTelegramHTTPProxy(item)
+	default:
+		_, status := measureProxyEndpoint(item.IP, item.Port)
+		return status, "仅检测代理入口，未知是否支持 Telegram"
+	}
+}
+
+func measureTelegramSOCKS5Proxy(item models.ListenerProxy) (string, string) {
+	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+	baseDialer := &net.Dialer{Timeout: 5 * time.Second}
+	var auth *proxy.Auth
+	if strings.TrimSpace(item.Username) != "" || strings.TrimSpace(item.Password) != "" {
+		auth = &proxy.Auth{User: item.Username, Password: item.Password}
+	}
+	dialer, err := proxy.SOCKS5("tcp", address, auth, baseDialer)
+	if err != nil {
+		return "failed", "SOCKS5 初始化失败"
+	}
+	conn, err := proxyDialWithTimeout(dialer, "tcp", listenerTelegramProbeTarget, 7*time.Second)
+	if err != nil {
+		if os.IsTimeout(err) {
+			return "timeout", "连接 Telegram 超时"
+		}
+		return "failed", sanitizeProxyError(err)
+	}
+	_ = conn.Close()
+	return "normal", ""
+}
+
+func measureTelegramHTTPProxy(item models.ListenerProxy) (string, string) {
+	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	if err != nil {
+		if os.IsTimeout(err) {
+			return "timeout", "连接代理超时"
+		}
+		return "failed", sanitizeProxyError(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(7 * time.Second))
+
+	var builder strings.Builder
+	builder.WriteString("CONNECT ")
+	builder.WriteString(listenerTelegramProbeTarget)
+	builder.WriteString(" HTTP/1.1\r\nHost: ")
+	builder.WriteString(listenerTelegramProbeTarget)
+	builder.WriteString("\r\nProxy-Connection: close\r\n")
+	if strings.TrimSpace(item.Username) != "" || strings.TrimSpace(item.Password) != "" {
+		token := base64.StdEncoding.EncodeToString([]byte(item.Username + ":" + item.Password))
+		builder.WriteString("Proxy-Authorization: Basic ")
+		builder.WriteString(token)
+		builder.WriteString("\r\n")
+	}
+	builder.WriteString("\r\n")
+	if _, err := conn.Write([]byte(builder.String())); err != nil {
+		return "failed", sanitizeProxyError(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		if os.IsTimeout(err) {
+			return "timeout", "Telegram CONNECT 超时"
+		}
+		return "failed", sanitizeProxyError(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return "normal", ""
+	}
+	if resp.StatusCode == http.StatusProxyAuthRequired {
+		return "failed", "代理认证失败 407"
+	}
+	return "failed", fmt.Sprintf("Telegram CONNECT 返回 %d", resp.StatusCode)
+}
+
 func measureProxyEndpoint(ip string, port int) (int64, string) {
 	address := net.JoinHostPort(strings.TrimSpace(ip), fmt.Sprintf("%d", port))
 	start := time.Now()
@@ -694,6 +802,34 @@ func measureProxyEndpoint(ip string, port int) (int64, string) {
 		elapsed = 1
 	}
 	return elapsed, "normal"
+}
+
+func sanitizeProxyError(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimSpace(err.Error())
+	if text == "" {
+		return "代理连接失败"
+	}
+	text = strings.ReplaceAll(text, "\n", " ")
+	if len(text) > 180 {
+		text = text[:180]
+	}
+	return text
+}
+
+func listenerAccountProxyFailure(reason string) bool {
+	text := strings.ToLower(strings.TrimSpace(reason))
+	if text == "" {
+		return false
+	}
+	return strings.Contains(text, "proxy") ||
+		strings.Contains(text, "407") ||
+		strings.Contains(text, "connection to telegram failed") ||
+		strings.Contains(text, "connect call failed") ||
+		strings.Contains(text, "connection refused") ||
+		strings.Contains(text, "timed out")
 }
 
 func lookupProxyCountry(ctx context.Context, ip string) (string, string) {
@@ -1041,6 +1177,7 @@ func (s *Server) assignListenerProxiesToAccounts(c *gin.Context, proxyGroupID *u
 	var proxies []models.ListenerProxy
 	query := s.db.WithContext(c.Request.Context()).
 		Where("tenant_id = ? AND status NOT IN ?", tenantID, []string{"failed", "timeout"}).
+		Where("telegram_status = ?", "normal").
 		Order("bound_accounts asc, created_at asc")
 	if proxyGroupID != nil {
 		query = query.Where("group_id = ?", *proxyGroupID)
@@ -1049,7 +1186,7 @@ func (s *Server) assignListenerProxiesToAccounts(c *gin.Context, proxyGroupID *u
 		return listenerAdminAssignSummary{}, err
 	}
 	if len(proxies) == 0 {
-		return listenerAdminAssignSummary{}, fmt.Errorf("当前监听代理分组没有可分配代理")
+		return listenerAdminAssignSummary{}, fmt.Errorf("当前监听代理分组没有 Telegram 可用代理，请先检测代理或更换支持 Telegram 的代理")
 	}
 	var accounts []models.ListenerAccount
 	aq := s.db.WithContext(c.Request.Context()).Where("tenant_id = ?", tenantID).Order("created_at asc")
