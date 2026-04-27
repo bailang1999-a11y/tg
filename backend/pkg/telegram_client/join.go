@@ -20,6 +20,7 @@ type JoinRequest struct {
 	AccessType string
 	TargetType string
 	Identifier string
+	Proxy      ProxyConfig
 }
 
 type JoinResult struct {
@@ -87,6 +88,7 @@ func (j Joiner) Join(ctx context.Context, req JoinRequest) (JoinResult, error) {
 		"--target-type", req.TargetType,
 		"--target", req.Identifier,
 	}
+	args = AppendProxyArgs(args, req.Proxy)
 
 	runCtx, cancel := context.WithTimeout(ctx, j.timeout)
 	defer cancel()

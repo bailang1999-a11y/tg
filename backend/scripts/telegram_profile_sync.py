@@ -22,6 +22,8 @@ from telethon.tl.types import (
     UserStatusRecently,
 )
 
+from telegram_proxy import telethon_proxy_from_json
+
 
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
@@ -121,7 +123,7 @@ async def sync_avatar(client: TelegramClient, user, avatar_dir: str) -> Tuple[bo
         return True, False, "", str(exc)
 
 
-async def inspect_session(file_path: str, avatar_dir: str) -> dict:
+async def inspect_session(file_path: str, avatar_dir: str, proxy_config=None) -> dict:
     result = base_result()
     result["source"] = "session"
 
@@ -135,6 +137,7 @@ async def inspect_session(file_path: str, avatar_dir: str) -> dict:
         lang_code=API.TelegramDesktop.lang_code,
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=False,
+        proxy=proxy_config,
     )
 
     try:
@@ -181,7 +184,7 @@ async def inspect_session(file_path: str, avatar_dir: str) -> dict:
         await client.disconnect()
 
 
-async def inspect_tdata(file_path: str, avatar_dir: str) -> dict:
+async def inspect_tdata(file_path: str, avatar_dir: str, proxy_config=None) -> dict:
     result = base_result()
     result["source"] = "tdata"
 
@@ -208,6 +211,8 @@ async def inspect_tdata(file_path: str, avatar_dir: str) -> dict:
             api=API.TelegramDesktop,
             receive_updates=False,
         )
+        if proxy_config:
+            client.set_proxy(proxy_config)
         await client.connect()
         if not await client.is_user_authorized():
             result["reason"] = "tdata 会话未授权，需要重新导入"
@@ -258,6 +263,7 @@ async def main() -> int:
     parser.add_argument("--file", required=True)
     parser.add_argument("--access-type", default="")
     parser.add_argument("--avatar-dir", default="")
+    parser.add_argument("--proxy-json", default="")
     args = parser.parse_args()
 
     file_path = os.path.abspath(args.file)
@@ -272,9 +278,9 @@ async def main() -> int:
             return 0
 
         if access_type == "data":
-            result = await inspect_tdata(file_path, avatar_dir)
+            result = await inspect_tdata(file_path, avatar_dir, telethon_proxy_from_json(args.proxy_json))
         else:
-            result = await inspect_session(file_path, avatar_dir)
+            result = await inspect_session(file_path, avatar_dir, telethon_proxy_from_json(args.proxy_json))
         emit(result)
         return 0
     except Exception as exc:

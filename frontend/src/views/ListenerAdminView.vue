@@ -225,7 +225,7 @@
               </td>
               <td>{{ item.nickname || '未设置' }}</td>
               <td>{{ accessTypeText(item.access_type) }}</td>
-              <td>{{ item.exit_ip || '未分配' }} <span class="text-steel">{{ item.exit_flag }}</span></td>
+              <td>{{ accountExitIPText(item) }} <span class="text-steel">{{ item.exit_flag }}</span></td>
               <td>
                 <div class="count-cell">
                   <strong>{{ item.joined_target_count ?? item.joined_targets ?? 0 }}/{{ item.target_total_count ?? targets.length }}</strong>
@@ -335,7 +335,7 @@
                 <th>IP</th>
                 <th>端口</th>
                 <th>协议</th>
-                <th>用户名</th>
+                <th>出口 IP</th>
                 <th>延迟</th>
                 <th>地理位置</th>
                 <th>绑定终端数</th>
@@ -352,7 +352,7 @@
                 <td class="font-semibold">{{ item.ip }}</td>
                 <td>{{ item.port }}</td>
                 <td>{{ item.protocol_display || item.protocol }}</td>
-                <td>{{ item.username || '-' }}</td>
+                <td>{{ proxyExitIPText(item) }}</td>
                 <td>
                   <span class="latency-badge" :data-tone="proxyLatencyTone(item)">
                     <i>{{ proxyLatencyIcon(item) }}</i>
@@ -1152,6 +1152,12 @@ function accessTypeText(value: string) {
   return value
 }
 
+function accountExitIPText(item: ListenerAccount) {
+  if (item.exit_ip) return item.exit_ip
+  if (item.proxy_id) return '待检测'
+  return '未分配'
+}
+
 function avatarInitial(item: ListenerAccount) {
   const source = item.nickname || item.phone_display || item.phone || '?'
   return source.trim().slice(0, 1).toUpperCase()
@@ -1293,6 +1299,10 @@ function proxyLatencyText(item: ListenerProxy) {
   if (status === 'timeout') return '超时'
   if (status === 'failed') return '失败'
   return item.latency_ms ? `${item.latency_ms} ms` : '未检测'
+}
+
+function proxyExitIPText(item: ListenerProxy) {
+  return item.exit_ip || '待检测'
 }
 
 function proxyCountryText(item: ListenerProxy) {

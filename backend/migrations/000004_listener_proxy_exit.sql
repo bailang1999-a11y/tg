@@ -1,0 +1,1 @@
+ALTER TABLE listener_proxies ADD COLUMN IF NOT EXISTS exit_ip VARCHAR(80);

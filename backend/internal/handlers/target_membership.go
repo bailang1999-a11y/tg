@@ -333,6 +333,7 @@ func (s *Server) runRefreshTargetMembershipsTask(ctx context.Context, task model
 				FilePath:   account.FilePath,
 				AccessType: account.AccessType,
 				Targets:    targets,
+				Proxy:      account.Proxy,
 			})
 			resultsByRef := make(map[string]telegram_client.MembershipCheckResult, len(results))
 			for _, result := range results {
@@ -511,6 +512,7 @@ type membershipCheckAccount struct {
 	AccessType string
 	Ready      bool
 	Reason     string
+	Proxy      telegram_client.ProxyConfig
 }
 
 func (s *Server) loadMembershipCheckAccounts(ctx context.Context, joins []models.AccountTargetJoin) map[string]membershipCheckAccount {
@@ -562,6 +564,7 @@ func (s *Server) loadMembershipCheckAccounts(ctx context.Context, joins []models
 				AccessType: listener.AccessType,
 				Ready:      listenerAccountReadyForJoin(listener),
 				Reason:     "监听账号不可用或已被风控限制",
+				Proxy:      s.listenerAccountProxyConfig(ctx, uuid.Nil, listener),
 			}
 			if account.Ready {
 				account.Reason = ""

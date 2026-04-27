@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -24,6 +26,13 @@ import (
 )
 
 const listenerProxyProbeTarget = "www.gstatic.com:80"
+
+var listenerProxyExitLookupURLs = []string{
+	"http://api.ipify.org?format=json",
+	"https://api.ipify.org?format=json",
+	"http://ip-api.com/json/?fields=status,query,country,countryCode",
+	"http://ifconfig.me/ip",
+}
 
 func (s *Server) ImportListenerTargets(c *gin.Context) {
 	var req struct {
@@ -263,6 +272,7 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 	now := time.Now()
 	syncer := telegram_client.NewInspector(s.cfg)
 	summary := listenerCheckSummary{Total: len(accounts)}
+	exitCache := map[uuid.UUID]proxyExitResult{}
 	for _, account := range accounts {
 		status := "normal"
 		riskStatus := firstNonEmpty(strings.TrimSpace(account.RiskStatus), "正常")
@@ -282,6 +292,7 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 				FilePath:   account.FilePath,
 				AccessType: telegram_client.NormalizeTelegramAccessType(account.AccessType),
 				AvatarDir:  avatarDir,
+				Proxy:      s.listenerAccountProxyConfig(c.Request.Context(), tenantID, account),
 			})
 			if syncErr == nil || strings.TrimSpace(syncResult.Reason) != "" {
 				status = listenerNormalizeAccountStatus(syncResult.Status)
@@ -330,10 +341,22 @@ func (s *Server) CheckListenerAccounts(c *gin.Context) {
 		if normalizedPhone == "" {
 			normalizedPhone = phone
 		}
+		exitIP := account.ExitIP
+		exitCountry := account.ExitCountry
+		exitFlag := account.ExitFlag
+		if account.ProxyID != nil {
+			exit := s.lookupListenerAccountProxyExit(c.Request.Context(), tenantID, *account.ProxyID, exitCache)
+			exitIP = exit.IP
+			exitCountry = exit.Country
+			exitFlag = exit.Flag
+		}
 		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerAccount{}).Where("tenant_id = ? AND id = ?", tenantID, account.ID).Updates(map[string]any{
 			"phone":          normalizedPhone,
 			"nickname":       nickname,
 			"avatar_url":     avatarURL,
+			"exit_ip":        exitIP,
+			"exit_country":   exitCountry,
+			"exit_flag":      exitFlag,
 			"status":         status,
 			"risk_status":    riskStatus,
 			"last_online_at": lastOnlineAt,
@@ -395,7 +418,10 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 	summary := listenerProxyCheckSummary{Total: len(proxies)}
 	for _, item := range proxies {
 		latency, status := measureListenerProxy(item)
-		country, flag := lookupProxyCountry(c.Request.Context(), item.IP)
+		exit := lookupListenerProxyExit(c.Request.Context(), item)
+		exitIP := exit.IP
+		country := exit.Country
+		flag := exit.Flag
 		if country == "" {
 			country = firstNonEmpty(item.Country, "未知")
 			flag = item.Flag
@@ -411,6 +437,7 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", tenantID, item.ID).Updates(map[string]any{
 			"latency_ms": latency,
 			"status":     status,
+			"exit_ip":    exitIP,
 			"country":    country,
 			"flag":       flag,
 			"updated_at": time.Now(),
@@ -424,8 +451,16 @@ func (s *Server) CheckListenerProxies(c *gin.Context) {
 
 type proxyGeoResponse struct {
 	Status      string `json:"status"`
+	Query       string `json:"query"`
+	IP          string `json:"ip"`
 	Country     string `json:"country"`
 	CountryCode string `json:"countryCode"`
+}
+
+type proxyExitResult struct {
+	IP      string
+	Country string
+	Flag    string
 }
 
 func measureListenerProxy(item models.ListenerProxy) (int64, string) {
@@ -564,6 +599,137 @@ func lookupProxyCountry(ctx context.Context, ip string) (string, string) {
 		return "", ""
 	}
 	return strings.TrimSpace(geo.Country), countryFlagEmoji(geo.CountryCode)
+}
+
+func (s *Server) lookupListenerAccountProxyExit(ctx context.Context, tenantID uuid.UUID, proxyID uuid.UUID, cache map[uuid.UUID]proxyExitResult) proxyExitResult {
+	if cached, ok := cache[proxyID]; ok {
+		return cached
+	}
+	var item models.ListenerProxy
+	if err := s.db.WithContext(ctx).Where("tenant_id = ? AND id = ?", tenantID, proxyID).First(&item).Error; err != nil {
+		cache[proxyID] = proxyExitResult{}
+		return proxyExitResult{}
+	}
+	if strings.TrimSpace(item.ExitIP) != "" {
+		exit := proxyExitResult{IP: item.ExitIP, Country: item.Country, Flag: item.Flag}
+		cache[proxyID] = exit
+		return exit
+	}
+	exit := lookupListenerProxyExit(ctx, item)
+	cache[proxyID] = exit
+	return exit
+}
+
+func lookupListenerProxyExit(ctx context.Context, item models.ListenerProxy) proxyExitResult {
+	client := &http.Client{Timeout: 10 * time.Second}
+	switch strings.ToLower(strings.TrimSpace(item.Protocol)) {
+	case "socks5", "sk5":
+		dialer, err := listenerSOCKS5Dialer(item)
+		if err != nil {
+			return proxyExitResult{}
+		}
+		client.Transport = &http.Transport{
+			DialContext: func(ctx context.Context, network string, address string) (net.Conn, error) {
+				type result struct {
+					conn net.Conn
+					err  error
+				}
+				ch := make(chan result, 1)
+				go func() {
+					conn, err := dialer.Dial(network, address)
+					ch <- result{conn: conn, err: err}
+				}()
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case res := <-ch:
+					return res.conn, res.err
+				}
+			},
+		}
+	case "http", "https":
+		proxyURL, err := listenerHTTPProxyURL(item)
+		if err != nil {
+			return proxyExitResult{}
+		}
+		client.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	default:
+		return proxyExitResult{}
+	}
+
+	for _, lookupURL := range listenerProxyExitLookupURLs {
+		reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, lookupURL, nil)
+		if err != nil {
+			cancel()
+			continue
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			cancel()
+			continue
+		}
+		payload, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		_ = resp.Body.Close()
+		cancel()
+		if readErr != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			continue
+		}
+		exit := parseProxyExitPayload(ctx, payload)
+		if exit.IP != "" {
+			return exit
+		}
+	}
+	return proxyExitResult{}
+}
+
+func parseProxyExitPayload(ctx context.Context, payload []byte) proxyExitResult {
+	var geo proxyGeoResponse
+	if err := json.Unmarshal(payload, &geo); err == nil {
+		ip := firstNonEmpty(strings.TrimSpace(geo.Query), strings.TrimSpace(geo.IP))
+		if net.ParseIP(ip) == nil {
+			return proxyExitResult{}
+		}
+		country := strings.TrimSpace(geo.Country)
+		flag := countryFlagEmoji(geo.CountryCode)
+		if country == "" || flag == "" {
+			lookupCountry, lookupFlag := lookupProxyCountry(ctx, ip)
+			country = firstNonEmpty(country, lookupCountry)
+			flag = firstNonEmpty(flag, lookupFlag)
+		}
+		return proxyExitResult{IP: ip, Country: country, Flag: flag}
+	}
+	ip := strings.TrimSpace(string(payload))
+	if net.ParseIP(ip) == nil {
+		return proxyExitResult{}
+	}
+	country, flag := lookupProxyCountry(ctx, ip)
+	return proxyExitResult{IP: ip, Country: country, Flag: flag}
+}
+
+func listenerSOCKS5Dialer(item models.ListenerProxy) (proxy.Dialer, error) {
+	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
+	baseDialer := &net.Dialer{Timeout: 5 * time.Second}
+	var auth *proxy.Auth
+	if strings.TrimSpace(item.Username) != "" || strings.TrimSpace(item.Password) != "" {
+		auth = &proxy.Auth{User: item.Username, Password: item.Password}
+	}
+	return proxy.SOCKS5("tcp", address, auth, baseDialer)
+}
+
+func listenerHTTPProxyURL(item models.ListenerProxy) (*url.URL, error) {
+	scheme := strings.ToLower(strings.TrimSpace(item.Protocol))
+	if scheme != "http" && scheme != "https" {
+		scheme = "http"
+	}
+	proxyURL := &url.URL{
+		Scheme: scheme,
+		Host:   net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port)),
+	}
+	if strings.TrimSpace(item.Username) != "" || strings.TrimSpace(item.Password) != "" {
+		proxyURL.User = url.UserPassword(item.Username, item.Password)
+	}
+	return proxyURL, nil
 }
 
 func countryFlagEmoji(code string) string {
@@ -771,6 +937,7 @@ func (s *Server) assignListenerProxiesToAccounts(c *gin.Context, proxyGroupID *u
 	}
 	summary := listenerAdminAssignSummary{Accounts: len(accounts), Proxies: len(proxies)}
 	now := time.Now()
+	exitCache := map[uuid.UUID]proxyExitResult{}
 	for _, account := range accounts {
 		bestIndex := -1
 		for index := range proxies {
@@ -786,11 +953,24 @@ func (s *Server) assignListenerProxiesToAccounts(c *gin.Context, proxyGroupID *u
 			continue
 		}
 		proxy := proxies[bestIndex]
+		exit, ok := exitCache[proxy.ID]
+		if !ok {
+			exit = lookupListenerProxyExit(c.Request.Context(), proxy)
+			exitCache[proxy.ID] = exit
+		}
+		if exit.IP != "" {
+			_ = s.db.WithContext(c.Request.Context()).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", tenantID, proxy.ID).Updates(map[string]any{
+				"exit_ip":    exit.IP,
+				"country":    exit.Country,
+				"flag":       exit.Flag,
+				"updated_at": time.Now(),
+			}).Error
+		}
 		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerAccount{}).Where("tenant_id = ? AND id = ?", tenantID, account.ID).Updates(map[string]any{
 			"proxy_id":     proxy.ID,
-			"exit_ip":      proxy.IP,
-			"exit_country": proxy.Country,
-			"exit_flag":    proxy.Flag,
+			"exit_ip":      exit.IP,
+			"exit_country": exit.Country,
+			"exit_flag":    exit.Flag,
 			"updated_at":   now,
 		}).Error; err != nil {
 			return summary, err

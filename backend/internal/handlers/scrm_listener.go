@@ -574,6 +574,9 @@ func (s *Server) runSCRMListenerWorker(ctx context.Context, tenantID uuid.UUID, 
 		"--match-mode", runtime.rule.MatchMode,
 		"--terminal-label", listenerTerminalLabel(terminal),
 	)
+	if proxyConfig := s.listenerAccountProxyConfigByID(ctx, uuid.Nil, terminal.ID); proxyConfig.Enabled() {
+		cmd.Args = telegram_client.AppendProxyArgs(cmd.Args, proxyConfig)
+	}
 	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
@@ -627,6 +630,7 @@ func (s *Server) prepareSCRMListenerWorkerTargets(ctx context.Context, tenantID 
 			AccessType: terminal.AccessType,
 			TargetType: target.Type,
 			Identifier: target.Identifier,
+			Proxy:      s.listenerAccountProxyConfigByID(ctx, uuid.Nil, terminal.ID),
 		})
 		if err != nil || !result.OK {
 			reason := firstNonEmpty(result.Reason, "监听账号加群失败")

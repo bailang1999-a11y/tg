@@ -180,6 +180,9 @@ func (s *Server) autoAssignImportedListenerAccounts(c *gin.Context, summary *lis
 func listenerAccountPhoneFromUnitName(name string) string {
 	parts := strings.Split(filepath.ToSlash(name), "/")
 	for i := len(parts) - 1; i >= 0; i-- {
+		if isArchivePathSegment(parts[i]) {
+			continue
+		}
 		part := strings.TrimSuffix(parts[i], filepath.Ext(parts[i]))
 		if phone, _ := parseStructuredAccountName(part); phone != "" {
 			return phone

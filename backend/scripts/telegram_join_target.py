@@ -21,6 +21,8 @@ from telethon.errors import (
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
+from telegram_proxy import telethon_proxy_from_json
+
 
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
@@ -100,7 +102,7 @@ async def join_target(client: TelegramClient, target: str, target_type: str) -> 
         return result
 
 
-async def join_with_session(file_path: str, target: str, target_type: str) -> dict:
+async def join_with_session(file_path: str, target: str, target_type: str, proxy_config=None) -> dict:
     client = TelegramClient(
         file_path,
         API.TelegramDesktop.api_id,
@@ -111,6 +113,7 @@ async def join_with_session(file_path: str, target: str, target_type: str) -> di
         lang_code=API.TelegramDesktop.lang_code,
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=False,
+        proxy=proxy_config,
     )
 
     result = base_result(target, target_type)
@@ -127,7 +130,7 @@ async def join_with_session(file_path: str, target: str, target_type: str) -> di
         await client.disconnect()
 
 
-async def join_with_tdata(file_path: str, target: str, target_type: str) -> dict:
+async def join_with_tdata(file_path: str, target: str, target_type: str, proxy_config=None) -> dict:
     result = base_result(target, target_type)
     result["source"] = "tdata"
     if not zipfile.is_zipfile(file_path):
@@ -153,6 +156,8 @@ async def join_with_tdata(file_path: str, target: str, target_type: str) -> dict
             api=API.TelegramDesktop,
             receive_updates=False,
         )
+        if proxy_config:
+            client.set_proxy(proxy_config)
         await client.connect()
         if not await client.is_user_authorized():
             result["reason"] = "tdata 会话未授权，需要重新导入"
@@ -173,6 +178,7 @@ async def main() -> int:
     parser.add_argument("--access-type", default="")
     parser.add_argument("--target", required=True)
     parser.add_argument("--target-type", required=True)
+    parser.add_argument("--proxy-json", default="")
     args = parser.parse_args()
 
     file_path = os.path.abspath(args.file)
@@ -184,10 +190,11 @@ async def main() -> int:
             result["reason"] = "本地会话文件不存在"
             emit(result)
             return 0
+        proxy_config = telethon_proxy_from_json(args.proxy_json)
         if access_type == "data":
-            result = await join_with_tdata(file_path, args.target, args.target_type)
+            result = await join_with_tdata(file_path, args.target, args.target_type, proxy_config)
         else:
-            result = await join_with_session(file_path, args.target, args.target_type)
+            result = await join_with_session(file_path, args.target, args.target_type, proxy_config)
         emit(result)
         return 0
     except Exception as exc:

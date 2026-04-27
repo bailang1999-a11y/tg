@@ -1,6 +1,9 @@
 package handlers
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestExtractPhonePrefersAccountFileOrFolder(t *testing.T) {
 	tests := map[string]string{
@@ -8,6 +11,7 @@ func TestExtractPhonePrefersAccountFileOrFolder(t *testing.T) {
 		"+1_美国_(2)_500203087451776520591.zip/14452719040/tdata/D877F783D5D3EF8C/maps":         "14452719040",
 		"+1_美国_(2)_500203087451776520591.zip/14452719040/tdata/key_datas":                     "14452719040",
 		"+1_美国_(2)_500203087451776520591.zip/14452719040/key_data":                            "14452719040",
+		"+1_美国_(2)_500203087451776520591.zip/key_data":                                        "",
 		"/Users/demo/accounts/+1_美国_(2)_14452719040/14452719040.session":                      "14452719040",
 		"/Users/demo/accounts/+1_美国_(2)_14452719040/tdata/D877F783D5D3EF8C/D877F783D5D3EF8Cs": "14452719040",
 		"/Users/demo/accounts/+1_美国_(2)_14452719040/key_data":                                 "14452719040",
@@ -16,6 +20,19 @@ func TestExtractPhonePrefersAccountFileOrFolder(t *testing.T) {
 	for input, want := range tests {
 		if got := extractPhone(input); got != want {
 			t.Fatalf("extractPhone(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestTDataGroupKeySkipsArchiveContainerName(t *testing.T) {
+	tests := []string{
+		"+1_美国_(2)_500203087451776520591.zip/key_data",
+		"+1_美国_(2)_500203087451776520591.zip/D877F783D5D3EF8C/maps",
+	}
+
+	for _, input := range tests {
+		if got, ok := tdataGroupKey(input); ok {
+			t.Fatalf("tdataGroupKey(%q) = %q, want not detected", input, got)
 		}
 	}
 }
@@ -74,5 +91,24 @@ func TestMergeMixedAccountUnitsPrefersTData(t *testing.T) {
 	}
 	if skipped[0].Reason != "同账号已识别 TData，Session 已合并跳过" {
 		t.Fatalf("unexpected skip reason: %q", skipped[0].Reason)
+	}
+}
+
+func TestParseProxyExitPayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		wantIP  string
+	}{
+		{name: "ip api", payload: `{"status":"success","query":"198.51.100.8","country":"Test","countryCode":"US"}`, wantIP: "198.51.100.8"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseProxyExitPayload(context.Background(), []byte(tt.payload))
+			if got.IP != tt.wantIP {
+				t.Fatalf("parseProxyExitPayload() IP = %q, want %q", got.IP, tt.wantIP)
+			}
+		})
 	}
 }

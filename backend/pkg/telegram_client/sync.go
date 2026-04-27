@@ -58,6 +58,7 @@ type SyncRequest struct {
 	FilePath   string
 	AccessType string
 	AvatarDir  string
+	Proxy      ProxyConfig
 }
 
 type Inspector struct {
@@ -123,6 +124,7 @@ func (i Inspector) Sync(ctx context.Context, req SyncRequest) (SyncResult, error
 		}
 		args = append(args, "--avatar-dir", absAvatarDir)
 	}
+	args = AppendProxyArgs(args, req.Proxy)
 
 	runCtx, cancel := context.WithTimeout(ctx, i.timeout)
 	defer cancel()

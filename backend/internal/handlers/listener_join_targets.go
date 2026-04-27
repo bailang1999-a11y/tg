@@ -268,6 +268,7 @@ func (s *Server) runListenerJoinTargetsTask(ctx context.Context, task models.Tas
 			AccessType: account.AccessType,
 			TargetType: target.Type,
 			Identifier: target.Identifier,
+			Proxy:      s.listenerAccountProxyConfig(ctx, uuid.Nil, account),
 		})
 		duration := time.Since(start).Milliseconds()
 		row.Status = firstNonEmpty(result.Status, "failed")

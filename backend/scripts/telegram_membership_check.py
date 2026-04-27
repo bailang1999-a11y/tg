@@ -24,6 +24,8 @@ from telethon.tl.functions.channels import GetParticipantRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest
 from telethon.tl.types import ChannelParticipantBanned, ChatInviteAlready
 
+from telegram_proxy import telethon_proxy_from_json
+
 
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False))
@@ -191,7 +193,7 @@ async def check_many_memberships(client: TelegramClient, targets: list, source: 
     return results
 
 
-async def open_session(file_path: str) -> TelegramClient:
+async def open_session(file_path: str, proxy_config=None) -> TelegramClient:
     client = TelegramClient(
         file_path,
         API.TelegramDesktop.api_id,
@@ -202,12 +204,13 @@ async def open_session(file_path: str) -> TelegramClient:
         lang_code=API.TelegramDesktop.lang_code,
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=False,
+        proxy=proxy_config,
     )
     await client.connect()
     return client
 
 
-async def open_tdata(file_path: str):
+async def open_tdata(file_path: str, proxy_config=None):
     if not zipfile.is_zipfile(file_path):
         raise ValueError("当前 tdata 文件不完整，请重新导入完整 tdata 文件夹或 zip")
     temp_dir = tempfile.mkdtemp(prefix="codex3_tdata_member_")
@@ -225,6 +228,8 @@ async def open_tdata(file_path: str):
         api=API.TelegramDesktop,
         receive_updates=False,
     )
+    if proxy_config:
+        client.set_proxy(proxy_config)
     await client.connect()
     return client, temp_dir
 
@@ -236,6 +241,7 @@ async def main() -> int:
     parser.add_argument("--target", default="")
     parser.add_argument("--target-type", default="")
     parser.add_argument("--targets-json", default="")
+    parser.add_argument("--proxy-json", default="")
     args = parser.parse_args()
     batch_mode = bool((args.targets_json or "").strip())
     targets = []
@@ -262,11 +268,12 @@ async def main() -> int:
                 result["reason"] = reason
                 emit(result)
             return 0
+        proxy_config = telethon_proxy_from_json(args.proxy_json)
         if (args.access_type or "").strip().lower() == "data":
-            client, temp_dir = await open_tdata(os.path.abspath(args.file))
+            client, temp_dir = await open_tdata(os.path.abspath(args.file), proxy_config)
             result["source"] = "tdata"
         else:
-            client = await open_session(os.path.abspath(args.file))
+            client = await open_session(os.path.abspath(args.file), proxy_config)
             result["source"] = "session"
         if not await client.is_user_authorized():
             reason = "会话未授权，需要重新导入"

@@ -13,7 +13,7 @@ FROM python:3.12-slim
 
 ARG APP_VERSION=dev
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc libc6-dev \
+    && apt-get install -y --no-install-recommends gcc libc6-dev libglib2.0-0 \
     && python -m venv /opt/venv \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app

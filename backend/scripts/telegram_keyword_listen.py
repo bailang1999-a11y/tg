@@ -14,6 +14,8 @@ from opentele.api import API, UseCurrentSession
 from opentele.td import TDesktop
 from telethon import TelegramClient, events
 
+from telegram_proxy import telethon_proxy_from_json
+
 
 def emit(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False), flush=True)
@@ -33,7 +35,7 @@ def normalize_access_type(access_type: str) -> str:
     return "session"
 
 
-async def open_session(file_path: str) -> TelegramClient:
+async def open_session(file_path: str, proxy_config=None) -> TelegramClient:
     client = TelegramClient(
         file_path,
         API.TelegramDesktop.api_id,
@@ -44,12 +46,13 @@ async def open_session(file_path: str) -> TelegramClient:
         lang_code=API.TelegramDesktop.lang_code,
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=True,
+        proxy=proxy_config,
     )
     await client.connect()
     return client
 
 
-async def open_tdata(file_path: str):
+async def open_tdata(file_path: str, proxy_config=None):
     if not zipfile.is_zipfile(file_path):
         raise ValueError("当前 tdata 文件不完整，请重新导入完整 tdata 文件夹或 zip")
 
@@ -70,6 +73,8 @@ async def open_tdata(file_path: str):
         api=API.TelegramDesktop,
         receive_updates=True,
     )
+    if proxy_config:
+        client.set_proxy(proxy_config)
     await client.connect()
     return client, temp_dir
 
@@ -238,10 +243,11 @@ async def listen(args) -> int:
             signal.signal(sig, lambda *_: stop_event.set())
 
     try:
+        proxy_config = telethon_proxy_from_json(args.proxy_json)
         if access_type == "data":
-            client, temp_dir = await open_tdata(file_path)
+            client, temp_dir = await open_tdata(file_path, proxy_config)
         else:
-            client = await open_session(file_path)
+            client = await open_session(file_path, proxy_config)
 
         if not await client.is_user_authorized():
             emit({"type": "error", "reason": "监听号未授权，需要重新登录"})
@@ -350,6 +356,7 @@ async def main() -> int:
     parser.add_argument("--keywords-json", required=True)
     parser.add_argument("--match-mode", default="fuzzy")
     parser.add_argument("--terminal-label", default="")
+    parser.add_argument("--proxy-json", default="")
     args = parser.parse_args()
     return await listen(args)
 

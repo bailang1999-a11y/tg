@@ -20,6 +20,7 @@ type MembershipCheckRequest struct {
 	AccessType string
 	TargetType string
 	Identifier string
+	Proxy      ProxyConfig
 }
 
 type MembershipCheckTarget struct {
@@ -32,6 +33,7 @@ type MembershipBatchCheckRequest struct {
 	FilePath   string
 	AccessType string
 	Targets    []MembershipCheckTarget
+	Proxy      ProxyConfig
 }
 
 type MembershipCheckResult struct {
@@ -107,6 +109,7 @@ func (m MembershipChecker) Check(ctx context.Context, req MembershipCheckRequest
 		"--target-type", req.TargetType,
 		"--target", req.Identifier,
 	}
+	args = AppendProxyArgs(args, req.Proxy)
 
 	runCtx, cancel := context.WithTimeout(ctx, m.timeout)
 	defer cancel()
@@ -190,6 +193,7 @@ func (m MembershipChecker) CheckBatch(ctx context.Context, req MembershipBatchCh
 		"--access-type", req.AccessType,
 		"--targets-json", string(targetPayload),
 	}
+	args = AppendProxyArgs(args, req.Proxy)
 	runCtx, cancel := context.WithTimeout(ctx, m.batchTimeout(len(req.Targets)))
 	defer cancel()
 

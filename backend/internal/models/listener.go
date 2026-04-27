@@ -57,6 +57,7 @@ type ListenerProxy struct {
 	Protocol      string     `json:"protocol" gorm:"size:20;index"`
 	Username      string     `json:"username" gorm:"size:120"`
 	Password      string     `json:"-" gorm:"size:255"`
+	ExitIP        string     `json:"exit_ip" gorm:"size:80"`
 	LatencyMS     int        `json:"latency_ms"`
 	Country       string     `json:"country" gorm:"size:80"`
 	Flag          string     `json:"flag" gorm:"size:16"`

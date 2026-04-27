@@ -54,6 +54,7 @@ export type ListenerProxy = {
   protocol: string
   protocol_display?: string
   username: string
+  exit_ip?: string
   latency_ms?: number
   country: string
   flag: string

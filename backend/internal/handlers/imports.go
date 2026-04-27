@@ -883,6 +883,9 @@ func tdataGroupKey(name string) (string, bool) {
 	}
 	for i := len(parts) - 2; i >= 0; i-- {
 		part := strings.TrimSuffix(parts[i], filepath.Ext(parts[i]))
+		if isArchivePathSegment(parts[i]) {
+			continue
+		}
 		if numericToken(part) != "" && looksLikeTDataAccountPath(parts[i+1:]) {
 			return strings.Join(parts[:i+1], "/"), true
 		}
@@ -963,6 +966,15 @@ func looksLikeTDataAccountPath(parts []string) bool {
 	return false
 }
 
+func isArchivePathSegment(part string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(part))) {
+	case ".zip", ".rar", ".7z":
+		return true
+	default:
+		return false
+	}
+}
+
 func saveUploadedBytes(tenantID uuid.UUID, category, name string, data []byte) (string, error) {
 	base := filepath.Join("storage", "uploads", tenantID.String(), category)
 	if err := os.MkdirAll(base, 0o755); err != nil {
@@ -992,6 +1004,9 @@ func extractPhone(name string) string {
 	// root.zip/14452719040/tdata/key_datas
 	// Prefer the nearest account folder over digits in the archive name.
 	for i := len(parts) - 2; i >= 0; i-- {
+		if isArchivePathSegment(parts[i]) {
+			continue
+		}
 		part := strings.TrimSuffix(parts[i], filepath.Ext(parts[i]))
 		if phone := numericToken(part); phone != "" {
 			return phone
