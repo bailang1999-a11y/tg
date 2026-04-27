@@ -2,9 +2,9 @@
   <div class="page-shell workflow-console">
     <div class="page-header workflow-hero">
       <div>
-        <div class="workflow-kicker">Notification Workflow</div>
-        <h1 class="page-title">通知工作流</h1>
-        <p class="page-subtitle">选择终端组和目标组，编排多阶段消息漏斗，提交后进入任务中心追踪执行进度。</p>
+        <div class="workflow-kicker">Direct Message Broadcast</div>
+        <h1 class="page-title">私信群发</h1>
+        <p class="page-subtitle">选择账号组和目标组，编排多阶段私信内容，提交后进入任务中心追踪执行进度。</p>
       </div>
       <div class="page-actions">
         <span class="status-pill" data-tone="info">阶段 {{ form.steps.length }}/10</span>
@@ -23,7 +23,7 @@
             <div class="workflow-panel-head">
               <div>
                 <div class="workflow-section-label">01 Sources</div>
-                <h2>发送终端</h2>
+                <h2>发送账号</h2>
               </div>
               <span class="status-pill" data-tone="info">{{ terminalSelectionLabel }}</span>
             </div>
@@ -31,7 +31,7 @@
               <label class="workflow-pick-item" :class="{ 'is-active': allTerminalGroupsSelected }">
                 <input type="checkbox" :checked="allTerminalGroupsSelected" @change="selectAllTerminalGroups" />
                 <span>
-                  <strong>全部终端组</strong>
+                  <strong>全部账号组</strong>
                   <small>不限制发送账号来源</small>
                 </span>
               </label>
@@ -39,10 +39,10 @@
                 <input type="checkbox" :checked="isTerminalGroupSelected(group.id)" @change="toggleTerminalGroup(group.id, $event)" />
                 <span>
                   <strong>{{ group.name }}</strong>
-                  <small>{{ group.description || '终端分组' }}</small>
+                  <small>{{ group.description || '账号分组' }}</small>
                 </span>
               </label>
-              <div v-if="!terminalGroups.length" class="workflow-empty">暂无终端组，默认使用全部终端。</div>
+              <div v-if="!terminalGroups.length" class="workflow-empty">暂无账号组，默认使用全部账号。</div>
             </div>
           </GlassCard>
 
@@ -224,8 +224,8 @@
 
               <div class="workflow-summary">
                 <div>
-                  <span>终端范围</span>
-                  <strong>{{ form.terminal_group_ids.length ? `${form.terminal_group_ids.length} 个分组` : '全部终端组' }}</strong>
+                  <span>账号范围</span>
+                  <strong>{{ form.terminal_group_ids.length ? `${form.terminal_group_ids.length} 个分组` : '全部账号组' }}</strong>
                 </div>
                 <div>
                   <span>目标范围</span>
@@ -252,11 +252,11 @@
 
             <div class="workflow-submit-panel">
               <div class="workflow-submit-copy">
-                <strong>提交当前通知工作流</strong>
+                <strong>提交当前私信群发</strong>
                 <span>实时写入任务中心，后续可继续查看全部任务与失败原因。</span>
               </div>
               <GlassButton variant="primary" class="w-full" :loading="submitting" :disabled="!canSubmit" @click="submitJob">
-                {{ realExecutionEnabled ? '真实投递通知工作流' : '创建演练任务' }}
+                {{ realExecutionEnabled ? '真实投递私信群发' : '创建演练任务' }}
               </GlassButton>
             </div>
           </div>
@@ -312,7 +312,7 @@
                         <div class="tg-member-avatar" data-tone="sender">我</div>
                         <div class="workflow-bubble" :data-type="step.type" :data-phase="messagePhase(index)">
                           <div class="tg-sender-line">
-                            <strong>当前终端</strong>
+                            <strong>当前账号</strong>
                             <span>@active_sender</span>
                           </div>
                           <template v-if="step.type === 'text'">
@@ -447,7 +447,7 @@
         </div>
       </div>
       <div v-else class="workflow-task-empty">
-        还没有通知工作流任务，投递后这里会实时展示名称、目标和执行进度。
+        还没有私信群发任务，投递后这里会实时展示名称、目标和执行进度。
       </div>
     </GlassCard>
   </div>
@@ -501,7 +501,7 @@ const form = reactive({
   send_interval_value: 0,
   send_interval_unit: 'seconds' as IntervalUnit,
   steps: [
-    createStep('text', '您好，这是一条通知工作流消息：\n{欢迎|你好|Hi}，请查看今天的最新安排。', 0)
+    createStep('text', '您好，这是一条私信群发消息：\n{欢迎|你好|Hi}，请查看今天的最新安排。', 0)
   ] as RichStep[]
 })
 
@@ -888,7 +888,7 @@ async function submitJob() {
   if (!canSubmit.value) return
   const reason = invalidStepReason()
   if (reason) {
-    ui.toast({ title: '通知工作流未完成', message: reason, tone: 'warning' })
+    ui.toast({ title: '私信群发未完成', message: reason, tone: 'warning' })
     return
   }
   normalizeCadence()
@@ -905,7 +905,7 @@ async function submitJob() {
     workflowTaskID.value = task.id
     await loadWorkflowTask()
     ui.toast({
-      title: realExecutionEnabled.value ? '通知工作流已投递' : '演练任务已创建',
+      title: realExecutionEnabled.value ? '私信群发已投递' : '演练任务已创建',
       message: realExecutionEnabled.value ? `任务 ${task.id} 已进入真实执行队列。` : `任务 ${task.id} 处于演练模式，不会真实发送 Telegram 消息。`,
       tone: realExecutionEnabled.value ? 'success' : 'warning'
     })

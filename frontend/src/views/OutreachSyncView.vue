@@ -3,7 +3,7 @@
     <div class="outreach-topbar">
       <div class="min-w-0">
         <div class="eyebrow">OUTREACH COMMAND</div>
-        <h1 class="page-title outreach-title">主动触达工作台</h1>
+        <h1 class="page-title outreach-title">监听设置</h1>
         <p class="page-subtitle outreach-subtitle">配置监听关键词，按会员查看任务与实时线索，监听资源默认走后台监听矩阵。</p>
       </div>
       <div class="outreach-actions">

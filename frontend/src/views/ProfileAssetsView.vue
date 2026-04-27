@@ -3,8 +3,8 @@
     <div class="profile-topbar">
       <div class="min-w-0">
         <div class="eyebrow">PROFILE WORKSPACE</div>
-        <h1 class="page-title profile-title">资料与素材</h1>
-        <p class="page-subtitle profile-subtitle">集中管理昵称、签名、个人频道和头像素材，按终端范围批量生成资料修改任务。</p>
+        <h1 class="page-title profile-title">一键修改账号资料</h1>
+        <p class="page-subtitle profile-subtitle">集中管理昵称、签名、个人频道和头像素材，按账号范围批量生成资料修改任务。</p>
       </div>
       <div class="profile-top-actions">
         <span class="profile-pill">范围：{{ scopeLabel }}</span>
@@ -652,7 +652,7 @@ async function load() {
     avatarGroups.value = avatarGroupData
     await loadAssets()
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '读取资料与素材失败'
+    error.value = err instanceof Error ? err.message : '读取账号资料失败'
   } finally {
     loading.value = false
   }

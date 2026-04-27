@@ -2,7 +2,7 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <h1 class="page-title">导入中心</h1>
+        <h1 class="page-title">导入账号</h1>
         <p class="page-subtitle">选择账号包文件夹、.session 或 zip 后先确认，再开始导入；系统自动识别 Session / TData，并按手机号文件夹聚合多个账号，同账号优先按 TData 导入。</p>
       </div>
     </div>

@@ -2,7 +2,7 @@
   <div class="page-shell">
     <div class="page-header">
       <div>
-        <h1 class="page-title">目标池</h1>
+        <h1 class="page-title">目标群组</h1>
         <p class="page-subtitle">批量导入 Telegram 目标链接，或直接把终端里的个人频道批量加入目标池，统一支持现有分组或新建分组。</p>
       </div>
       <div class="page-actions">
