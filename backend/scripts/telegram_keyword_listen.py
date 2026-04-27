@@ -341,12 +341,26 @@ async def listen(args) -> int:
                 except asyncio.TimeoutError:
                     continue
 
+        async def emit_heartbeat():
+            while not stop_event.is_set():
+                emit({"type": "heartbeat", "terminal": args.terminal_label})
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    continue
+
         emit({"type": "ready", "terminal": args.terminal_label, "resolved_count": len(chat_entities)})
         poller = asyncio.create_task(poll_latest_messages())
+        heartbeat = asyncio.create_task(emit_heartbeat())
         await stop_event.wait()
         poller.cancel()
+        heartbeat.cancel()
         try:
             await poller
+        except asyncio.CancelledError:
+            pass
+        try:
+            await heartbeat
         except asyncio.CancelledError:
             pass
         return 0

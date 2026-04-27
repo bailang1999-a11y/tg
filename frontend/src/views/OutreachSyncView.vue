@@ -14,6 +14,9 @@
         <span class="status-pill" :data-tone="listenerStatus?.running ? 'success' : 'warning'">
           {{ listenerStatus?.running ? '监听中' : '未启动' }}
         </span>
+        <span v-if="listenerStatus?.running" class="status-pill" :data-tone="listenerHealthTone">
+          {{ listenerStatus.health_text || listenerHealthText }}
+        </span>
         <GlassButton v-if="!listenerStatus?.running" variant="primary" size="sm" :loading="listenerBusy" @click="startListener">开始监听</GlassButton>
         <GlassButton v-else variant="danger" size="sm" :loading="listenerBusy" @click="stopListener">停止监听</GlassButton>
         <GlassButton :variant="botRunning ? 'danger' : 'success'" size="sm" :loading="botBusy" @click="toggleBotPushRuntime">
@@ -50,6 +53,10 @@
       <div class="outreach-stat">
         <span>实时同步</span>
         <strong>{{ inboxSocketConnected ? 'WS 加速' : inboxPolling ? '秒级轮询' : '暂停' }}</strong>
+      </div>
+      <div class="outreach-stat">
+        <span>监听心跳</span>
+        <strong>{{ listenerHeartbeatText }}</strong>
       </div>
     </div>
 
@@ -178,6 +185,10 @@
             <div class="listener-meta">
               <span>最近事件</span>
               <strong>{{ formatDateTime(listenerStatus?.last_event_at) }}</strong>
+            </div>
+            <div class="listener-meta">
+              <span>心跳状态</span>
+              <strong>{{ listenerStatus?.health_text || listenerHealthText }}</strong>
             </div>
             <GlassButton variant="primary" class="save-rule-btn" :loading="savingRule" @click="saveRule">保存任务</GlassButton>
           </div>
@@ -417,6 +428,30 @@ const keywordCount = computed(() => keywordList.value.length)
 const matchModeLabel = computed(() => (matchMode.value === 'exact' ? '精确匹配' : '模糊匹配'))
 const selectedMonitorAccounts = computed(() => listenerAccounts.value.filter(listenerAccountReady))
 const listenerTasks = computed(() => rules.value)
+const listenerHealthTone = computed(() => {
+  switch (listenerStatus.value?.health_status) {
+    case 'healthy':
+      return 'success'
+    case 'idle':
+    case 'starting':
+      return 'info'
+    case 'silent':
+      return 'warning'
+    case 'stale':
+      return 'danger'
+    default:
+      return listenerStatus.value?.running ? 'warning' : 'neutral'
+  }
+})
+const listenerHealthText = computed(() => {
+  if (!listenerStatus.value?.running) return '监听未启动'
+  return listenerStatus.value.health_text || '等待监听心跳'
+})
+const listenerHeartbeatText = computed(() => {
+  if (!listenerStatus.value?.running) return '未启动'
+  if (!listenerStatus.value.last_heartbeat_at) return '等待心跳'
+  return formatRelativeTime(listenerStatus.value.last_heartbeat_at)
+})
 const monitorAccountSummary = computed(() => {
   const ready = selectedMonitorAccounts.value.length
   const total = listenerAccounts.value.length
@@ -818,7 +853,7 @@ function listenerAccountMeta(account: ListenerAccount) {
 function listenerAccountReady(account: ListenerAccount) {
   const status = normalizeKeyword(account.status)
   const risk = normalizeKeyword(account.risk_status)
-  return !['abnormal', 'disabled', 'banned', 'offline'].includes(status) && !['restricted', 'banned', 'disabled'].includes(risk)
+  return !['abnormal', 'disabled', 'banned'].includes(status) && !['restricted', 'banned', 'disabled'].includes(risk)
 }
 
 function userLabel(user?: User | null) {
@@ -928,6 +963,18 @@ function normalizeKeyword(value: unknown) {
 function formatDateTime(value?: string | null) {
   if (!value) return '--'
   return new Date(value).toLocaleString()
+}
+
+function formatRelativeTime(value?: string | null) {
+  if (!value) return '--'
+  const time = new Date(value).getTime()
+  if (Number.isNaN(time)) return value
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - time) / 1000))
+  if (diffSeconds < 60) return `${diffSeconds} 秒前`
+  const diffMinutes = Math.floor(diffSeconds / 60)
+  if (diffMinutes < 60) return `${diffMinutes} 分钟前`
+  const diffHours = Math.floor(diffMinutes / 60)
+  return `${diffHours} 小时前`
 }
 
 function formatTimeOnly(value?: string | null) {

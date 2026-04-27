@@ -29,6 +29,12 @@ type systemFrequencySettings struct {
 	DashboardRefreshSecond int `json:"dashboard_refresh_second"`
 }
 
+type systemListenerHealthSettings struct {
+	AutoAccountCheckEnabled     bool `json:"auto_account_check_enabled"`
+	AccountCheckIntervalMinutes int  `json:"account_check_interval_minutes"`
+	SilenceAlertMinutes         int  `json:"silence_alert_minutes"`
+}
+
 type systemAuditSettings struct {
 	LogRetentionDays  int  `json:"log_retention_days"`
 	RealtimeLogStream bool `json:"realtime_log_stream"`
@@ -54,20 +60,22 @@ type systemRiskControlSettings struct {
 }
 
 type systemSettingsPayload struct {
-	Security    systemSecuritySettings    `json:"security"`
-	Frequency   systemFrequencySettings   `json:"frequency"`
-	Audit       systemAuditSettings       `json:"audit"`
-	Adapter     systemAdapterSettings     `json:"adapter"`
-	RiskControl systemRiskControlSettings `json:"risk_control"`
+	Security       systemSecuritySettings       `json:"security"`
+	Frequency      systemFrequencySettings      `json:"frequency"`
+	ListenerHealth systemListenerHealthSettings `json:"listener_health"`
+	Audit          systemAuditSettings          `json:"audit"`
+	Adapter        systemAdapterSettings        `json:"adapter"`
+	RiskControl    systemRiskControlSettings    `json:"risk_control"`
 }
 
 type systemSettingsResponse struct {
-	Security    systemSecuritySettings    `json:"security"`
-	Frequency   systemFrequencySettings   `json:"frequency"`
-	Audit       systemAuditSettings       `json:"audit"`
-	Adapter     systemAdapterSettings     `json:"adapter"`
-	RiskControl systemRiskControlSettings `json:"risk_control"`
-	UpdatedAt   time.Time                 `json:"updated_at"`
+	Security       systemSecuritySettings       `json:"security"`
+	Frequency      systemFrequencySettings      `json:"frequency"`
+	ListenerHealth systemListenerHealthSettings `json:"listener_health"`
+	Audit          systemAuditSettings          `json:"audit"`
+	Adapter        systemAdapterSettings        `json:"adapter"`
+	RiskControl    systemRiskControlSettings    `json:"risk_control"`
+	UpdatedAt      time.Time                    `json:"updated_at"`
 }
 
 type systemSettingsHistoryItem struct {
@@ -92,6 +100,11 @@ func defaultSystemSettings() systemSettingsPayload {
 			MaxConcurrentOutreach:  4,
 			WSLogBatchSize:         80,
 			DashboardRefreshSecond: 30,
+		},
+		ListenerHealth: systemListenerHealthSettings{
+			AutoAccountCheckEnabled:     true,
+			AccountCheckIntervalMinutes: 60,
+			SilenceAlertMinutes:         15,
 		},
 		Audit: systemAuditSettings{
 			LogRetentionDays:  30,
@@ -119,6 +132,10 @@ func defaultSystemSettings() systemSettingsPayload {
 
 func normalizeSystemSettings(input systemSettingsPayload) systemSettingsPayload {
 	defaults := defaultSystemSettings()
+	listenerHealth := input.ListenerHealth
+	if listenerHealth.AccountCheckIntervalMinutes == 0 && listenerHealth.SilenceAlertMinutes == 0 && !listenerHealth.AutoAccountCheckEnabled {
+		listenerHealth = defaults.ListenerHealth
+	}
 
 	return systemSettingsPayload{
 		Security: systemSecuritySettings{
@@ -131,6 +148,11 @@ func normalizeSystemSettings(input systemSettingsPayload) systemSettingsPayload 
 			MaxConcurrentOutreach:  clampSettingsInt(input.Frequency.MaxConcurrentOutreach, 1, 32, defaults.Frequency.MaxConcurrentOutreach),
 			WSLogBatchSize:         clampSettingsInt(input.Frequency.WSLogBatchSize, 20, 200, defaults.Frequency.WSLogBatchSize),
 			DashboardRefreshSecond: clampSettingsInt(input.Frequency.DashboardRefreshSecond, 10, 300, defaults.Frequency.DashboardRefreshSecond),
+		},
+		ListenerHealth: systemListenerHealthSettings{
+			AutoAccountCheckEnabled:     listenerHealth.AutoAccountCheckEnabled,
+			AccountCheckIntervalMinutes: clampSettingsInt(listenerHealth.AccountCheckIntervalMinutes, 5, 24*60, defaults.ListenerHealth.AccountCheckIntervalMinutes),
+			SilenceAlertMinutes:         clampSettingsInt(listenerHealth.SilenceAlertMinutes, 1, 24*60, defaults.ListenerHealth.SilenceAlertMinutes),
 		},
 		Audit: systemAuditSettings{
 			LogRetentionDays:  clampSettingsInt(input.Audit.LogRetentionDays, 7, 365, defaults.Audit.LogRetentionDays),
@@ -184,12 +206,13 @@ func parseSystemSettings(raw datatypes.JSON) systemSettingsPayload {
 
 func toSystemSettingsResponse(settings systemSettingsPayload, updatedAt time.Time) systemSettingsResponse {
 	return systemSettingsResponse{
-		Security:    settings.Security,
-		Frequency:   settings.Frequency,
-		Audit:       settings.Audit,
-		Adapter:     settings.Adapter,
-		RiskControl: settings.RiskControl,
-		UpdatedAt:   updatedAt,
+		Security:       settings.Security,
+		Frequency:      settings.Frequency,
+		ListenerHealth: settings.ListenerHealth,
+		Audit:          settings.Audit,
+		Adapter:        settings.Adapter,
+		RiskControl:    settings.RiskControl,
+		UpdatedAt:      updatedAt,
 	}
 }
 
@@ -315,6 +338,12 @@ func (s *Server) logSystemSettingsHistory(ctx context.Context, tenantID uuid.UUI
 			before:  before.RiskControl,
 			after:   after.RiskControl,
 		},
+		{
+			section: "listener_health",
+			summary: buildListenerHealthChangeSummary(before.ListenerHealth, after.ListenerHealth),
+			before:  before.ListenerHealth,
+			after:   after.ListenerHealth,
+		},
 	}
 	for _, entry := range entries {
 		if entry.summary == "" {
@@ -345,6 +374,20 @@ func buildRiskControlChangeSummary(before systemRiskControlSettings, after syste
 		return "关闭高风险自动避让"
 	default:
 		return "更新风控避让阈值"
+	}
+}
+
+func buildListenerHealthChangeSummary(before systemListenerHealthSettings, after systemListenerHealthSettings) string {
+	if before == after {
+		return ""
+	}
+	switch {
+	case !before.AutoAccountCheckEnabled && after.AutoAccountCheckEnabled:
+		return "开启监听账号定时检测"
+	case before.AutoAccountCheckEnabled && !after.AutoAccountCheckEnabled:
+		return "关闭监听账号定时检测"
+	default:
+		return "更新监听健康检测策略"
 	}
 }
 

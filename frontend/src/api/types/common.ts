@@ -216,6 +216,11 @@ export type SystemSettings = {
     ws_log_batch_size: number
     dashboard_refresh_second: number
   }
+  listener_health: {
+    auto_account_check_enabled: boolean
+    account_check_interval_minutes: number
+    silence_alert_minutes: number
+  }
   audit: {
     log_retention_days: number
     realtime_log_stream: boolean

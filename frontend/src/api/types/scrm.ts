@@ -71,6 +71,10 @@ export type SCRMListenerStatus = {
   terminal_count: number
   match_count: number
   last_event_at?: string
+  last_heartbeat_at?: string
+  health_status?: string
+  health_text?: string
+  silence_seconds?: number
   strike_enabled: boolean
   monitor_terminal_labels?: string[]
 }

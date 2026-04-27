@@ -76,6 +76,37 @@
         <GlassCard class="h-full">
           <div class="mb-4 flex items-center justify-between gap-3">
             <div>
+              <div class="text-xs uppercase tracking-[0.16em] text-steel">Listener Health</div>
+              <h2 class="mt-2 text-xl font-black">监听健康检测</h2>
+            </div>
+            <span class="status-pill" :data-tone="form.listener_health.auto_account_check_enabled ? 'success' : 'warning'">
+              {{ form.listener_health.auto_account_check_enabled ? '定时检测开启' : '手动检测' }}
+            </span>
+          </div>
+          <div class="space-y-3">
+            <label class="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div>
+                <div class="font-semibold">自动刷新监听账号状态</div>
+                <div class="mt-1 text-sm text-steel">后台按设定周期创建“一键检测监听账号”任务并写入任务日志</div>
+              </div>
+              <input v-model="form.listener_health.auto_account_check_enabled" type="checkbox" class="h-5 w-5" />
+            </label>
+            <div class="grid gap-4 md:grid-cols-2">
+              <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div class="text-sm text-steel">账号状态检测周期（分钟）</div>
+                <input v-model.number="form.listener_health.account_check_interval_minutes" type="number" min="5" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              </label>
+              <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div class="text-sm text-steel">无消息提醒阈值（分钟）</div>
+                <input v-model.number="form.listener_health.silence_alert_minutes" type="number" min="1" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              </label>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard class="h-full">
+          <div class="mb-4 flex items-center justify-between gap-3">
+            <div>
               <div class="text-xs uppercase tracking-[0.16em] text-steel">Risk Control</div>
               <h2 class="mt-2 text-xl font-black">风控避让阈值</h2>
             </div>
@@ -367,7 +398,7 @@ const updatedAt = ref('')
 const snapshot = ref('')
 const history = ref<SystemSettingsHistoryItem[]>([])
 const versionInfo = ref<SystemVersion | null>(null)
-const historyFilter = ref<'all' | 'risk_control'>('all')
+const historyFilter = ref<'all' | 'risk_control' | 'listener_health'>('all')
 const historyRange = ref<'all' | '24h' | '7d'>('all')
 const historyActor = ref('all')
 const form = reactive(createDefaultSettings())
@@ -400,6 +431,12 @@ const summaryItems = computed(() => [
     tone: form.adapter.telegram_apply_enabled ? 'success' : 'warning'
   },
   {
+    label: '监听健康',
+    value: form.listener_health.auto_account_check_enabled ? `${form.listener_health.account_check_interval_minutes} 分钟检测` : '仅手动检测',
+    help: `无消息 ${form.listener_health.silence_alert_minutes} 分钟后提示`,
+    tone: form.listener_health.auto_account_check_enabled ? 'success' : 'warning'
+  },
+  {
     label: '风控避让',
     value: form.risk_control.auto_bypass_high_risk ? `高风险自动跳过 · ${riskPresetText.value}` : '仅记录不避让',
     help: `发信冷却 ${form.risk_control.message_cooldown_minutes}±${form.risk_control.message_jitter_minutes} 分钟，加群 ${form.risk_control.join_interval_minutes}±${form.risk_control.join_jitter_minutes} 分钟`,
@@ -416,7 +453,8 @@ const riskPresetOptions = [
 
 const historyFilterOptions = [
   { label: '全部', value: 'all' as const },
-  { label: '只看风控策略', value: 'risk_control' as const }
+  { label: '只看风控策略', value: 'risk_control' as const },
+  { label: '只看监听健康', value: 'listener_health' as const }
 ]
 
 const historyRangeOptions = [
@@ -433,7 +471,10 @@ const historyFieldLabels: Record<string, string> = {
   message_jitter_minutes: '发信随机浮动',
   join_daily_limit: '每日加群上限',
   join_interval_minutes: '加群间隔分钟',
-  join_jitter_minutes: '加群随机浮动'
+  join_jitter_minutes: '加群随机浮动',
+  auto_account_check_enabled: '自动检测监听账号',
+  account_check_interval_minutes: '账号检测周期分钟',
+  silence_alert_minutes: '无消息提醒分钟'
 }
 
 const filteredHistory = computed(() => {
@@ -545,6 +586,11 @@ function createDefaultSettings(): Omit<SystemSettings, 'updated_at'> {
       ws_log_batch_size: 80,
       dashboard_refresh_second: 30
     },
+    listener_health: {
+      auto_account_check_enabled: true,
+      account_check_interval_minutes: 60,
+      silence_alert_minutes: 15
+    },
     audit: {
       log_retention_days: 30,
       realtime_log_stream: true,
@@ -573,6 +619,7 @@ function serializeSettings(source: Omit<SystemSettings, 'updated_at'>) {
   return {
     security: { ...source.security },
     frequency: { ...source.frequency },
+    listener_health: { ...source.listener_health },
     audit: { ...source.audit },
     adapter: { ...source.adapter },
     risk_control: { ...source.risk_control }
@@ -587,6 +634,9 @@ function applySettings(settings: SystemSettings) {
   form.frequency.max_concurrent_outreach = settings.frequency.max_concurrent_outreach
   form.frequency.ws_log_batch_size = settings.frequency.ws_log_batch_size
   form.frequency.dashboard_refresh_second = settings.frequency.dashboard_refresh_second
+  form.listener_health.auto_account_check_enabled = settings.listener_health?.auto_account_check_enabled ?? true
+  form.listener_health.account_check_interval_minutes = settings.listener_health?.account_check_interval_minutes ?? 60
+  form.listener_health.silence_alert_minutes = settings.listener_health?.silence_alert_minutes ?? 15
   form.audit.log_retention_days = settings.audit.log_retention_days
   form.audit.realtime_log_stream = settings.audit.realtime_log_stream
   form.audit.notify_on_failure = settings.audit.notify_on_failure

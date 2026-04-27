@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
@@ -12,8 +13,12 @@ import (
 	"codex3/backend/internal/config"
 	"codex3/backend/internal/database"
 	"codex3/backend/internal/models"
+	appnats "codex3/backend/internal/nats"
 	appredis "codex3/backend/internal/redis"
+	"codex3/backend/internal/taskqueue"
 
+	"github.com/google/uuid"
+	"gorm.io/datatypes"
 	"gorm.io/gorm"
 )
 
@@ -26,6 +31,14 @@ func main() {
 	if _, err := appredis.Connect(cfg); err != nil {
 		log.Printf("redis unavailable: %v", err)
 	}
+	natsClient, err := appnats.Connect(cfg)
+	if err != nil {
+		log.Printf("nats unavailable: scheduled task dispatch disabled: %v", err)
+	}
+	if natsClient != nil && natsClient.Conn != nil {
+		defer natsClient.Conn.Drain()
+	}
+	publisher := taskqueue.NewPublisher(natsClient)
 
 	interval := cfg.SchedulerInterval
 	if interval <= 0 {
@@ -35,16 +48,22 @@ func main() {
 	defer stop()
 
 	runMaintenance(ctx, cfg, db)
-	ticker := time.NewTicker(interval)
+	lastMaintenanceAt := time.Now()
+	runScheduledListenerAccountChecks(ctx, db, publisher)
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
-	log.Printf("scheduler started: interval=%s", interval)
+	log.Printf("scheduler started: maintenance_interval=%s", interval)
 	for {
 		select {
 		case <-ctx.Done():
 			log.Println("scheduler stopping")
 			return
 		case <-ticker.C:
-			runMaintenance(ctx, cfg, db)
+			if time.Since(lastMaintenanceAt) >= interval {
+				runMaintenance(ctx, cfg, db)
+				lastMaintenanceAt = time.Now()
+			}
+			runScheduledListenerAccountChecks(ctx, db, publisher)
 		}
 	}
 }
@@ -72,11 +91,110 @@ func runMaintenance(ctx context.Context, cfg config.Config, db *gorm.DB) {
 	cleanupImportStages(cfg)
 }
 
+type scheduledSystemSettings struct {
+	ListenerHealth struct {
+		AutoAccountCheckEnabled     bool `json:"auto_account_check_enabled"`
+		AccountCheckIntervalMinutes int  `json:"account_check_interval_minutes"`
+	} `json:"listener_health"`
+}
+
+func runScheduledListenerAccountChecks(ctx context.Context, db *gorm.DB, publisher *taskqueue.Publisher) {
+	if publisher == nil {
+		return
+	}
+	if !tryAcquireNamedSchedulerLock(ctx, db, scheduledListenerAccountCheckLockKey) {
+		return
+	}
+	defer releaseNamedSchedulerLock(context.Background(), db, scheduledListenerAccountCheckLockKey)
+
+	var setting models.SystemSetting
+	if err := db.WithContext(ctx).Order("created_at asc").First(&setting).Error; err != nil {
+		if err != gorm.ErrRecordNotFound {
+			log.Printf("scheduled listener account check read settings failed: %v", err)
+		}
+		return
+	}
+	var settings scheduledSystemSettings
+	if err := json.Unmarshal(setting.Payload, &settings); err != nil {
+		log.Printf("scheduled listener account check parse settings failed: %v", err)
+		return
+	}
+	if settings.ListenerHealth.AccountCheckIntervalMinutes == 0 {
+		settings.ListenerHealth.AutoAccountCheckEnabled = true
+		settings.ListenerHealth.AccountCheckIntervalMinutes = 60
+	}
+	if !settings.ListenerHealth.AutoAccountCheckEnabled {
+		return
+	}
+	intervalMinutes := settings.ListenerHealth.AccountCheckIntervalMinutes
+	if intervalMinutes <= 0 {
+		intervalMinutes = 60
+	}
+	if intervalMinutes < 5 {
+		intervalMinutes = 5
+	}
+	cutoff := time.Now().Add(-time.Duration(intervalMinutes) * time.Minute)
+	var recent int64
+	if err := db.WithContext(ctx).Model(&models.Task{}).
+		Where("tenant_id = ? AND type = ? AND created_at >= ?", setting.TenantID, "listener_account_check", cutoff).
+		Where("status IN ?", []string{"queued", "running", "success", "partial_success", "failed"}).
+		Count(&recent).Error; err != nil {
+		log.Printf("scheduled listener account check recent task lookup failed: %v", err)
+		return
+	}
+	if recent > 0 {
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]string{"source": "scheduled"})
+	task := models.Task{
+		ID:       uuid.New(),
+		TenantID: setting.TenantID,
+		Name:     "监听账号定时状态检测",
+		Type:     "listener_account_check",
+		Status:   "queued",
+		Progress: 0,
+		Payload:  datatypes.JSON(payload),
+	}
+	if err := db.WithContext(ctx).Create(&task).Error; err != nil {
+		log.Printf("scheduled listener account check create task failed: %v", err)
+		return
+	}
+	logTask := models.TaskLog{
+		ID:        uuid.New(),
+		TenantID:  task.TenantID,
+		TaskID:    task.ID,
+		Level:     "INFO",
+		Category:  "task",
+		Action:    "scheduled",
+		Details:   "监听账号定时状态检测任务已创建",
+		TraceID:   uuid.NewString(),
+		CreatedAt: time.Now(),
+	}
+	_ = db.WithContext(ctx).Create(&logTask).Error
+	if err := publisher.PublishTask(ctx, taskqueue.TaskMessage{
+		TaskID:    task.ID,
+		TenantID:  task.TenantID,
+		Type:      task.Type,
+		Action:    "run",
+		CreatedAt: time.Now(),
+	}); err != nil {
+		log.Printf("scheduled listener account check publish task failed: %v", err)
+		return
+	}
+	log.Printf("scheduled listener account check queued task id=%s interval=%dm", task.ID, intervalMinutes)
+}
+
 const schedulerLockKey int64 = 20260425
+const scheduledListenerAccountCheckLockKey int64 = 20260426
 
 func tryAcquireSchedulerLock(ctx context.Context, db *gorm.DB) bool {
+	return tryAcquireNamedSchedulerLock(ctx, db, schedulerLockKey)
+}
+
+func tryAcquireNamedSchedulerLock(ctx context.Context, db *gorm.DB, key int64) bool {
 	var locked bool
-	if err := db.WithContext(ctx).Raw("SELECT pg_try_advisory_lock(?)", schedulerLockKey).Scan(&locked).Error; err != nil {
+	if err := db.WithContext(ctx).Raw("SELECT pg_try_advisory_lock(?)", key).Scan(&locked).Error; err != nil {
 		log.Printf("maintenance lock acquire failed: %v", err)
 		return false
 	}
@@ -84,8 +202,12 @@ func tryAcquireSchedulerLock(ctx context.Context, db *gorm.DB) bool {
 }
 
 func releaseSchedulerLock(ctx context.Context, db *gorm.DB) {
+	releaseNamedSchedulerLock(ctx, db, schedulerLockKey)
+}
+
+func releaseNamedSchedulerLock(ctx context.Context, db *gorm.DB, key int64) {
 	var unlocked bool
-	if err := db.WithContext(ctx).Raw("SELECT pg_advisory_unlock(?)", schedulerLockKey).Scan(&unlocked).Error; err != nil {
+	if err := db.WithContext(ctx).Raw("SELECT pg_advisory_unlock(?)", key).Scan(&unlocked).Error; err != nil {
 		log.Printf("maintenance lock release failed: %v", err)
 	}
 }

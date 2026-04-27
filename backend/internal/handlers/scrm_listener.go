@@ -27,19 +27,21 @@ import (
 )
 
 type scrmListenerRuntime struct {
-	key             string
-	task            models.Task
-	rule            models.SCRMKeywordRule
-	terminals       []models.Terminal
-	targets         []models.Target
-	ownerUserID     *uuid.UUID
-	startedAt       time.Time
-	cancel          context.CancelFunc
-	activeWorkers   atomic.Int32
-	matchCount      atomic.Int64
-	lastEventAtUnix atomic.Int64
-	stopping        atomic.Bool
-	mu              sync.Mutex
+	key                 string
+	task                models.Task
+	rule                models.SCRMKeywordRule
+	terminals           []models.Terminal
+	targets             []models.Target
+	ownerUserID         *uuid.UUID
+	startedAt           time.Time
+	cancel              context.CancelFunc
+	activeWorkers       atomic.Int32
+	matchCount          atomic.Int64
+	lastEventAtUnix     atomic.Int64
+	lastHeartbeatAtUnix atomic.Int64
+	lastSilenceLogUnix  atomic.Int64
+	stopping            atomic.Bool
+	mu                  sync.Mutex
 }
 
 func scrmListenerRuntimeKey(tenantID uuid.UUID, subscriberID uuid.UUID) string {
@@ -65,6 +67,10 @@ type scrmListenerStatusResponse struct {
 	TerminalCount   int      `json:"terminal_count"`
 	MatchCount      int64    `json:"match_count"`
 	LastEventAt     string   `json:"last_event_at,omitempty"`
+	LastHeartbeatAt string   `json:"last_heartbeat_at,omitempty"`
+	HealthStatus    string   `json:"health_status"`
+	HealthText      string   `json:"health_text"`
+	SilenceSeconds  int64    `json:"silence_seconds"`
 	StrikeEnabled   bool     `json:"strike_enabled"`
 	MonitorTerminal []string `json:"monitor_terminal_labels,omitempty"`
 }
@@ -123,15 +129,17 @@ func (s *Server) GetSCRMListenerStatus(c *gin.Context) {
 
 	if runtime == nil {
 		s.markStaleSCRMListenerTasksStopped(c.Request.Context(), s.tenantID(c))
-		utils.OK(c, scrmListenerStatusResponse{Running: false})
+		utils.OK(c, scrmListenerStatusResponse{Running: false, HealthStatus: "stopped", HealthText: "监听未启动"})
 		return
 	}
 
 	lastEventAt := runtime.lastEventAtUnix.Load()
+	lastHeartbeatAt := runtime.lastHeartbeatAtUnix.Load()
 	monitorLabels := make([]string, 0, len(runtime.terminals))
 	for _, terminal := range runtime.terminals {
 		monitorLabels = append(monitorLabels, listenerTerminalLabel(terminal))
 	}
+	healthStatus, healthText, silenceSeconds := s.scrmListenerHealth(runtime, lastEventAt, lastHeartbeatAt)
 
 	response := scrmListenerStatusResponse{
 		Running:         runtime.activeWorkers.Load() > 0,
@@ -141,13 +149,49 @@ func (s *Server) GetSCRMListenerStatus(c *gin.Context) {
 		TargetCount:     len(runtime.targets),
 		TerminalCount:   len(runtime.terminals),
 		MatchCount:      runtime.matchCount.Load(),
+		HealthStatus:    healthStatus,
+		HealthText:      healthText,
+		SilenceSeconds:  silenceSeconds,
 		StrikeEnabled:   runtime.rule.StrikeEnabled,
 		MonitorTerminal: monitorLabels,
 	}
 	if lastEventAt > 0 {
 		response.LastEventAt = time.Unix(lastEventAt, 0).Format(time.RFC3339)
 	}
+	if lastHeartbeatAt > 0 {
+		response.LastHeartbeatAt = time.Unix(lastHeartbeatAt, 0).Format(time.RFC3339)
+	}
 	utils.OK(c, response)
+}
+
+func (s *Server) scrmListenerHealth(runtime *scrmListenerRuntime, lastEventAt int64, lastHeartbeatAt int64) (string, string, int64) {
+	if runtime == nil || runtime.activeWorkers.Load() <= 0 {
+		return "stopped", "监听未运行", 0
+	}
+	now := time.Now().Unix()
+	if lastHeartbeatAt == 0 {
+		return "starting", "监听进程启动中，等待首次心跳", 0
+	}
+	if now-lastHeartbeatAt > 90 {
+		return "stale", "监听心跳中断，请查看任务日志", now - lastHeartbeatAt
+	}
+	lastActivity := lastEventAt
+	if lastActivity == 0 {
+		lastActivity = runtime.startedAt.Unix()
+	}
+	silenceSeconds := now - lastActivity
+	settings := s.readSystemSettings(context.Background(), runtime.task.TenantID)
+	threshold := settings.ListenerHealth.SilenceAlertMinutes
+	if threshold <= 0 {
+		threshold = 15
+	}
+	if silenceSeconds >= int64(threshold*60) {
+		return "silent", fmt.Sprintf("监听进程有心跳，但已 %d 分钟未收到群消息", silenceSeconds/60), silenceSeconds
+	}
+	if lastEventAt == 0 {
+		return "idle", "监听进程有心跳，暂未收到群消息", silenceSeconds
+	}
+	return "healthy", "监听进程有心跳，消息接收正常", silenceSeconds
 }
 
 func (s *Server) markStaleSCRMListenerTasksStopped(ctx context.Context, tenantID uuid.UUID) {
@@ -257,6 +301,7 @@ func (s *Server) startSCRMListenerRuntime(ctx context.Context, tenantID uuid.UUI
 		Updates(map[string]any{"status": "running", "updated_at": time.Now()}).Error
 	s.updateTaskState(ctx, task.ID, "running", 5, nil)
 	s.logTaskBackground(ctx, task, "INFO", "start", fmt.Sprintf("开始监听：监听组 %d 个目标，监听号 %d 个，匹配模式 %s，出击 %t", len(targets), len(terminals), rule.MatchMode, rule.StrikeEnabled))
+	go s.monitorSCRMListenerHealth(runCtx, runtime)
 
 	for _, terminal := range terminals {
 		runtime.activeWorkers.Add(1)
@@ -663,9 +708,14 @@ func (s *Server) consumeSCRMListenerStream(ctx context.Context, runtime *scrmLis
 
 		switch event.Type {
 		case "ready":
+			runtime.lastHeartbeatAtUnix.Store(time.Now().Unix())
 			s.logTaskBackground(context.Background(), runtime.task, "INFO", "ready", fmt.Sprintf("监听号 %s 已就绪，成功挂载 %d 个目标", listenerTerminalLabel(terminal), event.ResolvedCount))
+		case "heartbeat":
+			runtime.lastHeartbeatAtUnix.Store(time.Now().Unix())
 		case "message":
 			runtime.lastEventAtUnix.Store(time.Now().Unix())
+			runtime.lastHeartbeatAtUnix.Store(time.Now().Unix())
+			s.markListenerAccountMessageSeen(context.Background(), terminal.ID)
 			senderLabel := firstNonEmpty(event.UserAccount, event.UserNickname)
 			sourceLabel := firstNonEmpty(event.SourceChatName, event.SourceChatID)
 			if strings.TrimSpace(event.TriggerWord) != "" {
@@ -705,11 +755,47 @@ func (s *Server) consumeSCRMListenerStream(ctx context.Context, runtime *scrmLis
 		case "match":
 			runtime.matchCount.Add(1)
 			runtime.lastEventAtUnix.Store(time.Now().Unix())
+			runtime.lastHeartbeatAtUnix.Store(time.Now().Unix())
+			s.markListenerAccountMessageSeen(context.Background(), terminal.ID)
 			s.persistSCRMLeadEvent(ctx, runtime, terminal, event)
 		case "error":
 			s.logTaskBackground(context.Background(), runtime.task, "ERROR", "listener_error", fmt.Sprintf("监听号 %s：%s", listenerTerminalLabel(terminal), event.Reason))
 		}
 	}
+}
+
+func (s *Server) monitorSCRMListenerHealth(ctx context.Context, runtime *scrmListenerRuntime) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if runtime == nil || runtime.stopping.Load() {
+				return
+			}
+			status, text, _ := s.scrmListenerHealth(runtime, runtime.lastEventAtUnix.Load(), runtime.lastHeartbeatAtUnix.Load())
+			s.updateTaskState(context.Background(), runtime.task.ID, "running", 100, s.listenerSummary(runtime))
+			if status == "silent" || status == "stale" {
+				now := time.Now().Unix()
+				lastLogged := runtime.lastSilenceLogUnix.Load()
+				if now-lastLogged >= 300 && runtime.lastSilenceLogUnix.CompareAndSwap(lastLogged, now) {
+					s.logTaskBackground(context.Background(), runtime.task, "WARN", "listener_health", text)
+				}
+			}
+		}
+	}
+}
+
+func (s *Server) markListenerAccountMessageSeen(ctx context.Context, accountID uuid.UUID) {
+	if accountID == uuid.Nil {
+		return
+	}
+	now := time.Now()
+	_ = s.db.WithContext(ctx).Model(&models.ListenerAccount{}).
+		Where("id = ?", accountID).
+		Updates(map[string]any{"last_message_at": now, "updated_at": now}).Error
 }
 
 func (s *Server) consumeSCRMListenerErrors(ctx context.Context, runtime *scrmListenerRuntime, terminal models.Terminal, stream io.ReadCloser) {
@@ -811,13 +897,22 @@ func (s *Server) scrmLeadEventAlreadyCaptured(ctx context.Context, tenantID uuid
 
 func (s *Server) listenerSummary(runtime *scrmListenerRuntime) datatypes.JSON {
 	summary, _ := json.Marshal(gin.H{
-		"target_count":   len(runtime.targets),
-		"terminal_count": len(runtime.terminals),
-		"match_count":    runtime.matchCount.Load(),
-		"started_at":     runtime.startedAt.Format(time.RFC3339),
-		"strike_enabled": runtime.rule.StrikeEnabled,
+		"target_count":      len(runtime.targets),
+		"terminal_count":    len(runtime.terminals),
+		"match_count":       runtime.matchCount.Load(),
+		"started_at":        runtime.startedAt.Format(time.RFC3339),
+		"last_event_at":     unixTimeString(runtime.lastEventAtUnix.Load()),
+		"last_heartbeat_at": unixTimeString(runtime.lastHeartbeatAtUnix.Load()),
+		"strike_enabled":    runtime.rule.StrikeEnabled,
 	})
 	return datatypes.JSON(summary)
+}
+
+func unixTimeString(value int64) string {
+	if value <= 0 {
+		return ""
+	}
+	return time.Unix(value, 0).Format(time.RFC3339)
 }
 
 func extractKeywordList(raw datatypes.JSON) ([]string, error) {
