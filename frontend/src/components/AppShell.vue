@@ -3,9 +3,15 @@
     <aside class="app-sidebar hidden lg:flex">
       <div class="sidebar-brand">
         <div class="flex items-start gap-3">
-          <div class="sidebar-brand-mark">C3</div>
+          <div class="sidebar-brand-mark" aria-label="机器人头像">
+            <span class="robot-antenna"></span>
+            <span class="robot-face">
+              <i></i>
+              <i></i>
+            </span>
+          </div>
           <div class="min-w-0">
-            <div class="text-lg font-black text-white">Codex3</div>
+            <div class="text-lg font-black leading-tight text-white">TG 营销助手</div>
             <div class="mt-1 text-sm text-steel">多账号自动化运营平台</div>
           </div>
         </div>

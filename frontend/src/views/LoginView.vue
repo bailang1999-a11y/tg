@@ -1,63 +1,55 @@
 <template>
-  <main class="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8 lg:px-8">
+  <main class="login-page relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8 lg:px-8">
     <img
-      class="absolute inset-0 h-full w-full object-cover opacity-35"
-      src="https://images.unsplash.com/photo-1518709268805-4e9042af2176?auto=format&fit=crop&w=1800&q=80"
-      alt="控制台背景"
+      class="login-bg absolute inset-0 h-full w-full object-cover"
+      src="https://images.unsplash.com/photo-1611605698335-8b1569810432?auto=format&fit=crop&w=2000&q=85"
+      alt="TG 营销助手背景"
     />
-    <div class="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(79,172,254,0.22),transparent_35%),linear-gradient(180deg,rgba(11,15,25,0.38),rgba(11,15,25,0.86))]"></div>
+    <div class="login-overlay absolute inset-0"></div>
 
-    <div class="relative z-10 grid w-full max-w-6xl gap-6 lg:grid-cols-[1.08fr_0.92fr]">
-      <section class="glass-panel hidden rounded-[28px] p-7 lg:flex lg:flex-col lg:justify-between">
-        <div>
-          <div class="inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-steel">
-            <span class="status-dot bg-neon"></span>
-            <span>Operations Console</span>
-          </div>
-          <div class="mt-7 max-w-xl">
-            <h1 class="text-5xl font-black leading-[1.02] text-white">让导入、终端、任务和资料流转在一个控制台里。</h1>
-            <p class="mt-5 text-base leading-8 text-steel">
-              多账号接入、节点分组、目标池、通知工作流与资料修改，统一收拢到同一套玻璃化工作台。
-            </p>
+    <div class="relative z-10 grid w-full max-w-6xl items-center gap-8 lg:grid-cols-[1fr_440px]">
+      <section class="login-brand">
+        <div class="brand-mark-row">
+          <div class="brand-mark">TG</div>
+          <div>
+            <div class="brand-kicker">Telegram Growth Console</div>
+            <div class="brand-name">TG 营销助手</div>
           </div>
         </div>
 
-        <div class="grid gap-4 md:grid-cols-3">
-          <div class="app-card p-4">
-            <div class="text-xs uppercase tracking-[0.16em] text-steel">Import</div>
-            <div class="mt-3 text-xl font-black text-white">Session / TData</div>
-          </div>
-          <div class="app-card p-4">
-            <div class="text-xs uppercase tracking-[0.16em] text-steel">Profiles</div>
-            <div class="mt-3 text-xl font-black text-white">昵称 / 签名 / 频道 / 头像</div>
-          </div>
-          <div class="app-card p-4">
-            <div class="text-xs uppercase tracking-[0.16em] text-steel">Tasks</div>
-            <div class="mt-3 text-xl font-black text-white">真实状态与日志回流</div>
-          </div>
+        <h1>TG 营销助手</h1>
+        <p>账号导入、目标群组、私信群发、监听设置和资料修改，统一进入同一个后台。</p>
+
+        <div class="brand-strip" aria-label="核心模块">
+          <span>账号管理</span>
+          <span>私信群发</span>
+          <span>监听设置</span>
+          <span>版本更新</span>
         </div>
       </section>
 
       <section class="flex items-center justify-center">
-        <GlassCard class="w-full max-w-lg" padding="lg" tone="cyan">
-          <div class="mb-8">
-            <div class="text-xs font-semibold uppercase tracking-[0.16em] text-steel">Secure Access</div>
-            <div class="mt-3 text-3xl font-black text-white">登录运营控制台</div>
-            <p class="mt-3 text-sm leading-7 text-steel">输入账号信息后直接进入控制台，现有功能和数据保持不变。</p>
+        <GlassCard class="login-card w-full" padding="lg" tone="cyan">
+          <div class="login-card-head">
+            <div class="login-card-icon">TG</div>
+            <div>
+              <div class="text-xs font-semibold uppercase tracking-[0.16em] text-steel">Secure Access</div>
+              <div class="mt-2 text-3xl font-black text-white">登录 TG 营销助手</div>
+            </div>
           </div>
           <form class="space-y-4" @submit.prevent="submit">
             <label class="block">
               <span class="text-sm text-steel">用户名</span>
-              <input v-model="username" class="mt-2 min-h-12 w-full rounded-lg px-3.5 text-white" />
+              <input v-model="username" autocomplete="username" class="mt-2 min-h-12 w-full rounded-lg px-3.5 text-white" placeholder="请输入用户名" />
             </label>
             <label class="block">
               <span class="text-sm text-steel">密码</span>
-              <input v-model="password" type="password" class="mt-2 min-h-12 w-full rounded-lg px-3.5 text-white" />
+              <input v-model="password" autocomplete="current-password" type="password" class="mt-2 min-h-12 w-full rounded-lg px-3.5 text-white" placeholder="请输入密码" />
             </label>
             <p v-if="error" class="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">{{ error }}</p>
-            <GlassButton class="w-full" type="submit" variant="primary" size="lg" :loading="loading">进入控制台</GlassButton>
+            <GlassButton class="w-full" type="submit" variant="primary" size="lg" :loading="loading">进入后台</GlassButton>
           </form>
-          <div class="mt-5 rounded-2xl border border-white/8 bg-white/5 px-4 py-3 text-xs leading-6 text-steel">
+          <div class="login-note mt-5 rounded-2xl border border-white/8 bg-white/5 px-4 py-3 text-xs leading-6 text-steel">
             请使用管理员分配的生产账号登录。上线环境不要保留默认口令。
           </div>
         </GlassCard>
@@ -93,3 +85,141 @@ async function submit() {
   }
 }
 </script>
+
+<style scoped>
+.login-page {
+  background: #050a12;
+}
+
+.login-bg {
+  opacity: 0.46;
+  filter: saturate(1.08) contrast(1.05);
+}
+
+.login-overlay {
+  background:
+    linear-gradient(90deg, rgba(4, 10, 18, 0.94) 0%, rgba(7, 14, 24, 0.74) 44%, rgba(6, 11, 20, 0.88) 100%),
+    radial-gradient(circle at 70% 24%, rgba(41, 211, 255, 0.18), transparent 30%),
+    radial-gradient(circle at 28% 76%, rgba(92, 255, 108, 0.13), transparent 28%);
+}
+
+.login-brand {
+  color: white;
+  min-width: 0;
+}
+
+.brand-mark-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 1.25rem;
+  padding: 0.85rem 1rem;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.26);
+}
+
+.brand-mark,
+.login-card-icon {
+  display: grid;
+  place-items: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, #45f06a, #2fc8ff);
+  color: #05111c;
+  font-weight: 950;
+  box-shadow: 0 18px 44px rgba(47, 200, 255, 0.26);
+}
+
+.brand-kicker {
+  color: rgba(207, 220, 238, 0.72);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.brand-name {
+  margin-top: 0.2rem;
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.login-brand h1 {
+  margin-top: 2.2rem;
+  max-width: 680px;
+  font-size: clamp(3.4rem, 8vw, 6.7rem);
+  line-height: 0.98;
+  font-weight: 950;
+  letter-spacing: 0;
+}
+
+.login-brand p {
+  margin-top: 1.4rem;
+  max-width: 620px;
+  color: rgba(207, 220, 238, 0.82);
+  font-size: 1.08rem;
+  line-height: 2;
+}
+
+.brand-strip {
+  margin-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.brand-strip span {
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: rgba(7, 18, 30, 0.62);
+  border-radius: 999px;
+  padding: 0.65rem 0.95rem;
+  color: rgba(231, 238, 248, 0.88);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.login-card {
+  max-width: 440px;
+  border-radius: 1.35rem;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.38);
+}
+
+.login-card-head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.login-card :deep(input) {
+  border-color: rgba(255, 255, 255, 0.13);
+  background: rgba(8, 18, 32, 0.72);
+}
+
+.login-card :deep(input:focus) {
+  border-color: rgba(45, 216, 255, 0.72);
+  box-shadow: 0 0 0 3px rgba(45, 216, 255, 0.12);
+}
+
+.login-note {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+@media (max-width: 1023px) {
+  .login-overlay {
+    background:
+      linear-gradient(180deg, rgba(4, 10, 18, 0.88) 0%, rgba(4, 10, 18, 0.94) 100%),
+      radial-gradient(circle at 50% 18%, rgba(41, 211, 255, 0.18), transparent 34%);
+  }
+
+  .login-brand {
+    text-align: left;
+  }
+
+  .login-brand h1 {
+    font-size: clamp(2.9rem, 13vw, 4.6rem);
+  }
+}
+</style>
