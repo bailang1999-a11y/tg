@@ -33,7 +33,7 @@ func main() {
 	}
 	natsClient, err := appnats.Connect(cfg)
 	if err != nil {
-		log.Printf("nats unavailable: scheduled task dispatch disabled: %v", err)
+		log.Printf("nats unavailable: scheduled task dispatch will retry: %v", err)
 	}
 	if natsClient != nil && natsClient.Conn != nil {
 		defer natsClient.Conn.Drain()
@@ -59,6 +59,16 @@ func main() {
 			log.Println("scheduler stopping")
 			return
 		case <-ticker.C:
+			if publisher == nil {
+				var connectErr error
+				natsClient, connectErr = appnats.Connect(cfg)
+				if connectErr != nil {
+					log.Printf("nats retry failed: %v", connectErr)
+				} else {
+					log.Println("nats retry connected: scheduled task dispatch enabled")
+					publisher = taskqueue.NewPublisher(natsClient)
+				}
+			}
 			if time.Since(lastMaintenanceAt) >= interval {
 				runMaintenance(ctx, cfg, db)
 				lastMaintenanceAt = time.Now()
