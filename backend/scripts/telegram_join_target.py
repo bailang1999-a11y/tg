@@ -21,7 +21,7 @@ from telethon.errors import (
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.messages import ImportChatInviteRequest
 
-from telegram_proxy import telethon_proxy_from_json
+from telegram_proxy import telethon_proxy_from_json, telethon_use_ipv6_from_json
 
 
 def emit(payload: dict) -> None:
@@ -102,7 +102,7 @@ async def join_target(client: TelegramClient, target: str, target_type: str) -> 
         return result
 
 
-async def join_with_session(file_path: str, target: str, target_type: str, proxy_config=None) -> dict:
+async def join_with_session(file_path: str, target: str, target_type: str, proxy_config=None, use_ipv6: bool = False) -> dict:
     client = TelegramClient(
         file_path,
         API.TelegramDesktop.api_id,
@@ -114,6 +114,7 @@ async def join_with_session(file_path: str, target: str, target_type: str, proxy
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=False,
         proxy=proxy_config,
+        use_ipv6=use_ipv6,
     )
 
     result = base_result(target, target_type)
@@ -130,7 +131,7 @@ async def join_with_session(file_path: str, target: str, target_type: str, proxy
         await client.disconnect()
 
 
-async def join_with_tdata(file_path: str, target: str, target_type: str, proxy_config=None) -> dict:
+async def join_with_tdata(file_path: str, target: str, target_type: str, proxy_config=None, use_ipv6: bool = False) -> dict:
     result = base_result(target, target_type)
     result["source"] = "tdata"
     if not zipfile.is_zipfile(file_path):
@@ -155,6 +156,7 @@ async def join_with_tdata(file_path: str, target: str, target_type: str, proxy_c
             flag=UseCurrentSession,
             api=API.TelegramDesktop,
             receive_updates=False,
+            use_ipv6=use_ipv6,
         )
         if proxy_config:
             client.set_proxy(proxy_config)
@@ -191,10 +193,11 @@ async def main() -> int:
             emit(result)
             return 0
         proxy_config = telethon_proxy_from_json(args.proxy_json)
+        use_ipv6 = telethon_use_ipv6_from_json(args.proxy_json)
         if access_type == "data":
-            result = await join_with_tdata(file_path, args.target, args.target_type, proxy_config)
+            result = await join_with_tdata(file_path, args.target, args.target_type, proxy_config, use_ipv6)
         else:
-            result = await join_with_session(file_path, args.target, args.target_type, proxy_config)
+            result = await join_with_session(file_path, args.target, args.target_type, proxy_config, use_ipv6)
         emit(result)
         return 0
     except Exception as exc:

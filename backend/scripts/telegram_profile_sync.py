@@ -22,7 +22,7 @@ from telethon.tl.types import (
     UserStatusRecently,
 )
 
-from telegram_proxy import telethon_proxy_from_json
+from telegram_proxy import telethon_proxy_from_json, telethon_use_ipv6_from_json
 
 
 def emit(payload: dict) -> None:
@@ -123,7 +123,7 @@ async def sync_avatar(client: TelegramClient, user, avatar_dir: str) -> Tuple[bo
         return True, False, "", str(exc)
 
 
-async def inspect_session(file_path: str, avatar_dir: str, proxy_config=None) -> dict:
+async def inspect_session(file_path: str, avatar_dir: str, proxy_config=None, use_ipv6: bool = False) -> dict:
     result = base_result()
     result["source"] = "session"
 
@@ -138,6 +138,7 @@ async def inspect_session(file_path: str, avatar_dir: str, proxy_config=None) ->
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=False,
         proxy=proxy_config,
+        use_ipv6=use_ipv6,
     )
 
     try:
@@ -184,7 +185,7 @@ async def inspect_session(file_path: str, avatar_dir: str, proxy_config=None) ->
         await client.disconnect()
 
 
-async def inspect_tdata(file_path: str, avatar_dir: str, proxy_config=None) -> dict:
+async def inspect_tdata(file_path: str, avatar_dir: str, proxy_config=None, use_ipv6: bool = False) -> dict:
     result = base_result()
     result["source"] = "tdata"
 
@@ -210,6 +211,7 @@ async def inspect_tdata(file_path: str, avatar_dir: str, proxy_config=None) -> d
             flag=UseCurrentSession,
             api=API.TelegramDesktop,
             receive_updates=False,
+            use_ipv6=use_ipv6,
         )
         if proxy_config:
             client.set_proxy(proxy_config)
@@ -277,10 +279,12 @@ async def main() -> int:
             emit(result)
             return 0
 
+        proxy_config = telethon_proxy_from_json(args.proxy_json)
+        use_ipv6 = telethon_use_ipv6_from_json(args.proxy_json)
         if access_type == "data":
-            result = await inspect_tdata(file_path, avatar_dir, telethon_proxy_from_json(args.proxy_json))
+            result = await inspect_tdata(file_path, avatar_dir, proxy_config, use_ipv6)
         else:
-            result = await inspect_session(file_path, avatar_dir, telethon_proxy_from_json(args.proxy_json))
+            result = await inspect_session(file_path, avatar_dir, proxy_config, use_ipv6)
         emit(result)
         return 0
     except Exception as exc:

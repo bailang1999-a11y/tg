@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"net"
 	"strings"
 
 	"codex3/backend/internal/models"
@@ -24,7 +25,13 @@ func (s *Server) listenerAccountProxyConfig(ctx context.Context, tenantID uuid.U
 		Port:     item.Port,
 		Username: item.Username,
 		Password: item.Password,
+		UseIPv6:  listenerProxyHasIPv6Exit(item),
 	}
+}
+
+func listenerProxyHasIPv6Exit(item models.ListenerProxy) bool {
+	ip := net.ParseIP(strings.TrimSpace(item.ExitIP))
+	return ip != nil && ip.To4() == nil
 }
 
 func (s *Server) listenerAccountProxyConfigByID(ctx context.Context, tenantID uuid.UUID, accountID uuid.UUID) telegram_client.ProxyConfig {

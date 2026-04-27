@@ -1,5 +1,13 @@
 # 更新日志
 
+## v1.0.22 - 2026-04-27
+
+### 优化
+
+- 监听代理支持 IPv6-only SOCKS5 抢救模式：检测到 IPv6 出口时，账号客户端自动启用 Telethon IPv6 连接。
+- 代理检测在 IPv4 Telegram DC 不通时，会继续检测 Telegram IPv6 DC，避免把 IPv6-only 代理直接误判为不可用。
+- 后端镜像补充 `python-socks`，确保 Telethon 代理参数在新版依赖中生效。
+
 ## v1.0.21 - 2026-04-27
 
 ### 优化

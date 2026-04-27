@@ -11,6 +11,7 @@ type ProxyConfig struct {
 	Port     int    `json:"port"`
 	Username string `json:"username,omitempty"`
 	Password string `json:"password,omitempty"`
+	UseIPv6  bool   `json:"use_ipv6,omitempty"`
 }
 
 func (p ProxyConfig) Enabled() bool {

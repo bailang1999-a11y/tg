@@ -1,3 +1,4 @@
 telethon>=1.41,<2
 opentele>=1.15,<2
 PySocks>=1.7,<2
+python-socks[asyncio]>=2.5,<3

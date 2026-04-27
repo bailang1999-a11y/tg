@@ -28,6 +28,7 @@ import (
 const listenerProxyProbeTarget = "www.gstatic.com:80"
 const listenerHTTPProxyProbeURL = "http://www.gstatic.com/generate_204"
 const listenerTelegramProbeTarget = "149.154.167.50:443"
+const listenerTelegramIPv6ProbeHost = "2001:67c:4e8:f002::a"
 const listenerWebTelegramProbeURL = "https://web.telegram.org/k/"
 
 var listenerProxyExitLookupURLs = []string{
@@ -527,6 +528,7 @@ func (s *Server) runListenerProxyCheckTask(ctx context.Context, task models.Task
 			if exit.Flag != "" {
 				flag = exit.Flag
 			}
+			item.ExitIP = exitIP
 		}
 		telegramStatus := "untested"
 		telegramError := ""
@@ -820,6 +822,18 @@ func measureTelegramSOCKS5Proxy(item models.ListenerProxy) (string, string) {
 	}
 	conn, err := proxyDialWithTimeout(dialer, "tcp", listenerTelegramProbeTarget, 7*time.Second)
 	if err != nil {
+		if listenerProxyHasIPv6Exit(item) {
+			ipv6Target := net.JoinHostPort(listenerTelegramIPv6ProbeHost, "443")
+			ipv6Conn, ipv6Err := proxyDialWithTimeout(dialer, "tcp", ipv6Target, 7*time.Second)
+			if ipv6Err == nil {
+				_ = ipv6Conn.Close()
+				return "normal", "IPv6 Telegram DC 可用"
+			}
+			if os.IsTimeout(ipv6Err) {
+				return "timeout", "IPv6 Telegram DC 超时"
+			}
+			return "failed", sanitizeProxyError(ipv6Err)
+		}
 		if os.IsTimeout(err) {
 			return "timeout", "连接 Telegram 超时"
 		}

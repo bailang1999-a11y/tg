@@ -18,3 +18,14 @@ def telethon_proxy_from_json(raw: str) -> Optional[tuple]:
     username = (data.get("username") or "").strip() or None
     password = (data.get("password") or "").strip() or None
     return (proxy_type, host, port, True, username, password)
+
+
+def telethon_use_ipv6_from_json(raw: str) -> bool:
+    raw = (raw or "").strip()
+    if not raw:
+        return False
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return False
+    return bool(data.get("use_ipv6"))

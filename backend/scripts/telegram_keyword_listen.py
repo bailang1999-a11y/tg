@@ -14,7 +14,7 @@ from opentele.api import API, UseCurrentSession
 from opentele.td import TDesktop
 from telethon import TelegramClient, events
 
-from telegram_proxy import telethon_proxy_from_json
+from telegram_proxy import telethon_proxy_from_json, telethon_use_ipv6_from_json
 
 
 def emit(payload: dict) -> None:
@@ -35,7 +35,7 @@ def normalize_access_type(access_type: str) -> str:
     return "session"
 
 
-async def open_session(file_path: str, proxy_config=None) -> TelegramClient:
+async def open_session(file_path: str, proxy_config=None, use_ipv6: bool = False) -> TelegramClient:
     client = TelegramClient(
         file_path,
         API.TelegramDesktop.api_id,
@@ -47,12 +47,13 @@ async def open_session(file_path: str, proxy_config=None) -> TelegramClient:
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=True,
         proxy=proxy_config,
+        use_ipv6=use_ipv6,
     )
     await client.connect()
     return client
 
 
-async def open_tdata(file_path: str, proxy_config=None):
+async def open_tdata(file_path: str, proxy_config=None, use_ipv6: bool = False):
     if not zipfile.is_zipfile(file_path):
         raise ValueError("当前 tdata 文件不完整，请重新导入完整 tdata 文件夹或 zip")
 
@@ -72,6 +73,7 @@ async def open_tdata(file_path: str, proxy_config=None):
         flag=UseCurrentSession,
         api=API.TelegramDesktop,
         receive_updates=True,
+        use_ipv6=use_ipv6,
     )
     if proxy_config:
         client.set_proxy(proxy_config)
@@ -244,10 +246,11 @@ async def listen(args) -> int:
 
     try:
         proxy_config = telethon_proxy_from_json(args.proxy_json)
+        use_ipv6 = telethon_use_ipv6_from_json(args.proxy_json)
         if access_type == "data":
-            client, temp_dir = await open_tdata(file_path, proxy_config)
+            client, temp_dir = await open_tdata(file_path, proxy_config, use_ipv6)
         else:
-            client = await open_session(file_path, proxy_config)
+            client = await open_session(file_path, proxy_config, use_ipv6)
 
         if not await client.is_user_authorized():
             emit({"type": "error", "reason": "监听号未授权，需要重新登录"})

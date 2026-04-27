@@ -24,7 +24,7 @@ from telethon.tl.functions.channels import GetParticipantRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest
 from telethon.tl.types import ChannelParticipantBanned, ChatInviteAlready
 
-from telegram_proxy import telethon_proxy_from_json
+from telegram_proxy import telethon_proxy_from_json, telethon_use_ipv6_from_json
 
 
 def emit(payload: dict) -> None:
@@ -193,7 +193,7 @@ async def check_many_memberships(client: TelegramClient, targets: list, source: 
     return results
 
 
-async def open_session(file_path: str, proxy_config=None) -> TelegramClient:
+async def open_session(file_path: str, proxy_config=None, use_ipv6: bool = False) -> TelegramClient:
     client = TelegramClient(
         file_path,
         API.TelegramDesktop.api_id,
@@ -205,12 +205,13 @@ async def open_session(file_path: str, proxy_config=None) -> TelegramClient:
         system_lang_code=API.TelegramDesktop.system_lang_code,
         receive_updates=False,
         proxy=proxy_config,
+        use_ipv6=use_ipv6,
     )
     await client.connect()
     return client
 
 
-async def open_tdata(file_path: str, proxy_config=None):
+async def open_tdata(file_path: str, proxy_config=None, use_ipv6: bool = False):
     if not zipfile.is_zipfile(file_path):
         raise ValueError("当前 tdata 文件不完整，请重新导入完整 tdata 文件夹或 zip")
     temp_dir = tempfile.mkdtemp(prefix="codex3_tdata_member_")
@@ -227,6 +228,7 @@ async def open_tdata(file_path: str, proxy_config=None):
         flag=UseCurrentSession,
         api=API.TelegramDesktop,
         receive_updates=False,
+        use_ipv6=use_ipv6,
     )
     if proxy_config:
         client.set_proxy(proxy_config)
@@ -269,11 +271,12 @@ async def main() -> int:
                 emit(result)
             return 0
         proxy_config = telethon_proxy_from_json(args.proxy_json)
+        use_ipv6 = telethon_use_ipv6_from_json(args.proxy_json)
         if (args.access_type or "").strip().lower() == "data":
-            client, temp_dir = await open_tdata(os.path.abspath(args.file), proxy_config)
+            client, temp_dir = await open_tdata(os.path.abspath(args.file), proxy_config, use_ipv6)
             result["source"] = "tdata"
         else:
-            client = await open_session(os.path.abspath(args.file), proxy_config)
+            client = await open_session(os.path.abspath(args.file), proxy_config, use_ipv6)
             result["source"] = "session"
         if not await client.is_user_authorized():
             reason = "会话未授权，需要重新导入"
