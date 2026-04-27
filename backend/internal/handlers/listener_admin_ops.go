@@ -133,18 +133,33 @@ func (s *Server) ImportListenerProxies(c *gin.Context) {
 				}
 				continue
 			}
-			var existing int64
-			if err := tx.WithContext(c.Request.Context()).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND protocol = ? AND ip = ? AND port = ? AND username = ?", s.tenantID(c), proxy.Protocol, proxy.IP, proxy.Port, proxy.Username).Count(&existing).Error; err != nil {
-				return err
-			}
 			address := fmt.Sprintf("%s:%d", proxy.IP, proxy.Port)
-			if existing > 0 {
+			var existing models.ListenerProxy
+			err = tx.WithContext(c.Request.Context()).Where("tenant_id = ? AND protocol = ? AND ip = ? AND port = ? AND username = ?", s.tenantID(c), proxy.Protocol, proxy.IP, proxy.Port, proxy.Username).First(&existing).Error
+			if err == nil {
+				if groupID != nil && (existing.GroupID == nil || *existing.GroupID != *groupID) {
+					if err := tx.WithContext(c.Request.Context()).Model(&models.ListenerProxy{}).Where("tenant_id = ? AND id = ?", s.tenantID(c), existing.ID).Updates(map[string]any{
+						"group_id":   *groupID,
+						"updated_at": time.Now(),
+					}).Error; err != nil {
+						return err
+					}
+					summary.Success++
+					summary.Items = append(summary.Items, listenerImportResult{Line: line, Identifier: address, Status: "success", Reason: "已存在，已移动到所选分组"})
+					if task != nil {
+						_ = s.createTaskLog(c.Request.Context(), *task, "INFO", "import_proxies", fmt.Sprintf("第 %d 行已存在，已移动到所选分组：%s", index+1, address), "", "")
+					}
+					continue
+				}
 				summary.Duplicate++
 				summary.Items = append(summary.Items, listenerImportResult{Line: line, Identifier: address, Status: "duplicate", Reason: "监听代理已存在"})
 				if task != nil {
 					_ = s.createTaskLog(c.Request.Context(), *task, "WARN", "import_proxies", fmt.Sprintf("第 %d 行重复：%s 已存在", index+1, address), "", "")
 				}
 				continue
+			}
+			if err != gorm.ErrRecordNotFound {
+				return err
 			}
 			item := models.ListenerProxy{ID: uuid.New(), TenantID: s.tenantID(c), GroupID: groupID, Code: fmt.Sprintf("LP-%06d", nextCode), IP: proxy.IP, Port: proxy.Port, Protocol: proxy.Protocol, Username: proxy.Username, Password: proxy.Password, Country: "未知", Status: "untested"}
 			if err := tx.WithContext(c.Request.Context()).Create(&item).Error; err != nil {
@@ -1139,7 +1154,7 @@ func (s *Server) resolveListenerGroup(c *gin.Context, resourceType string, group
 		return nil, "", fmt.Errorf("分组 ID 无效")
 	}
 	var group models.Group
-	if err := s.db.WithContext(c.Request.Context()).Where("id = ? AND resource_type = ?", parsed, resourceType).First(&group).Error; err != nil {
+	if err := s.db.WithContext(c.Request.Context()).Where("tenant_id = ? AND id = ? AND resource_type = ?", s.tenantID(c), parsed, resourceType).First(&group).Error; err != nil {
 		return nil, "", fmt.Errorf("分组不存在")
 	}
 	return &group.ID, group.Name, nil

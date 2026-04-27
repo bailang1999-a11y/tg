@@ -339,6 +339,7 @@
             </select>
             <span class="status-pill" data-tone="info">显示 {{ pagedProxies.length }} / {{ filteredProxies.length }}</span>
             <GlassButton variant="secondary" :loading="checkingProxies" @click="checkProxies">一键检测代理延迟</GlassButton>
+            <GlassButton variant="danger" :loading="deletingProxyGroup" :disabled="!proxyFilterGroupID" @click="deleteCurrentProxyGroup">删除当前分组</GlassButton>
             <GlassButton variant="danger" :disabled="!selectedProxyIDs.length" @click="deleteSelected('proxy')">删除已选 {{ selectedProxyIDs.length }}</GlassButton>
           </div>
         </div>
@@ -423,11 +424,11 @@
               </div>
             </div>
             <div class="space-y-3">
-              <select v-model="pendingGroupID" class="min-h-11 w-full rounded-lg px-3 text-sm">
+              <select v-model="pendingGroupID" class="min-h-11 w-full rounded-lg px-3 text-sm" @change="handlePendingGroupChange">
                 <option value="">选择已有分组</option>
                 <option v-for="group in pendingGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
               </select>
-              <input v-model="pendingGroupName" class="min-h-11 w-full rounded-lg px-3 text-sm" :placeholder="`或新建${pendingImport.groupLabel}`" />
+              <input v-model="pendingGroupName" class="min-h-11 w-full rounded-lg px-3 text-sm" :disabled="!!pendingGroupID" :placeholder="`或新建${pendingImport.groupLabel}`" />
               <p class="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-steel">来源：{{ pendingImport.source }}</p>
             </div>
             <div class="mt-7 flex flex-wrap justify-end gap-3">
@@ -512,6 +513,7 @@ const checkingProxies = ref(false)
 const refreshingTargets = ref(false)
 const refreshingMemberships = ref(false)
 const deletingAbnormal = ref(false)
+const deletingProxyGroup = ref(false)
 const assigning = ref(false)
 const joiningTargets = ref(false)
 const error = ref('')
@@ -762,6 +764,10 @@ function openTextImport(kind: 'target' | 'proxy') {
   pendingImport.value = { ...meta, kind, content: lines.join('\n'), count: lines.length, source: '手动输入' }
   pendingGroupID.value = ''
   pendingGroupName.value = ''
+}
+
+function handlePendingGroupChange() {
+  if (pendingGroupID.value) pendingGroupName.value = ''
 }
 
 async function buildImportContent(files: File[], kind: ImportKind) {
@@ -1225,6 +1231,34 @@ async function deleteSelected(kind: ImportKind) {
     await load()
   } catch (err) {
     ui.toast({ title: `批量删除${label}失败`, message: err instanceof Error ? err.message : '请求失败', tone: 'error' })
+  }
+}
+
+async function deleteCurrentProxyGroup() {
+  const groupID = proxyFilterGroupID.value
+  if (!groupID) return
+  const group = proxyGroups.value.find((item) => item.id === groupID)
+  const count = proxies.value.filter((item) => item.group_id === groupID).length
+  const accepted = await ui.confirm({
+    title: '删除代理分组',
+    message: `确认删除代理分组「${group?.name || '未命名'}」？该分组下 ${count} 个代理会一起删除，已绑定这些代理的监听号会被取消代理绑定。`,
+    confirmText: '删除分组',
+    cancelText: '取消',
+    tone: 'error'
+  })
+  if (!accepted) return
+  deletingProxyGroup.value = true
+  try {
+    await api.deleteGroup('listener_proxy', groupID)
+    proxyFilterGroupID.value = ''
+    if (assignProxyGroupID.value === groupID) assignProxyGroupID.value = ''
+    selectedProxyIDs.value = []
+    ui.toast({ title: '代理分组已删除', message: '分组及该分组下代理已删除，列表已刷新。', tone: 'success' })
+    await load()
+  } catch (err) {
+    ui.toast({ title: '删除代理分组失败', message: err instanceof Error ? err.message : '请求失败', tone: 'error' })
+  } finally {
+    deletingProxyGroup.value = false
   }
 }
 

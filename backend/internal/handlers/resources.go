@@ -149,6 +149,46 @@ func (s *Server) DeleteGroup(c *gin.Context) {
 		utils.OK(c, gin.H{"deleted": id})
 		return
 	}
+	if c.Param("resource") == "listener_proxy" {
+		if err := s.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+			var proxies []models.ListenerProxy
+			proxyQuery := tx.WithContext(c.Request.Context()).Where("group_id = ?", id)
+			proxyQuery = s.applyTenantAccess(c, proxyQuery)
+			if err := proxyQuery.Find(&proxies).Error; err != nil {
+				return err
+			}
+			proxyIDs := make([]uuid.UUID, 0, len(proxies))
+			for _, item := range proxies {
+				proxyIDs = append(proxyIDs, item.ID)
+			}
+			if len(proxyIDs) > 0 {
+				accountQuery := tx.WithContext(c.Request.Context()).Model(&models.ListenerAccount{}).Where("proxy_id IN ?", proxyIDs)
+				accountQuery = s.applyTenantAccess(c, accountQuery)
+				if err := accountQuery.Updates(map[string]any{
+					"proxy_id":     nil,
+					"exit_ip":      "",
+					"exit_country": "",
+					"exit_flag":    "",
+					"updated_at":   time.Now(),
+				}).Error; err != nil {
+					return err
+				}
+				deleteProxyQuery := tx.WithContext(c.Request.Context()).Where("id IN ?", proxyIDs)
+				deleteProxyQuery = s.applyTenantAccess(c, deleteProxyQuery)
+				if err := deleteProxyQuery.Delete(&models.ListenerProxy{}).Error; err != nil {
+					return err
+				}
+			}
+			groupQuery := tx.WithContext(c.Request.Context()).Where("id = ? AND resource_type = ?", id, c.Param("resource"))
+			groupQuery = s.applyTenantAccess(c, groupQuery)
+			return groupQuery.Delete(&models.Group{}).Error
+		}); err != nil {
+			utils.Fail(c, http.StatusInternalServerError, "删除监听代理分组失败")
+			return
+		}
+		utils.OK(c, gin.H{"deleted": id})
+		return
+	}
 	query := s.db.WithContext(c.Request.Context()).Where("id = ? AND resource_type = ?", id, c.Param("resource"))
 	query = s.applyTenantAccess(c, query)
 	if err := query.Delete(&models.Group{}).Error; err != nil {
