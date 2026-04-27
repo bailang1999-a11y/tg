@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +24,7 @@ import (
 )
 
 const listenerProxyProbeTarget = "www.gstatic.com:80"
+const listenerHTTPProxyProbeURL = "http://www.gstatic.com/generate_204"
 
 var listenerProxyExitLookupURLs = []string{
 	"http://api.ipify.org?format=json",
@@ -630,21 +629,23 @@ func measureSOCKS5Proxy(item models.ListenerProxy) (int64, string) {
 }
 
 func measureHTTPProxy(item models.ListenerProxy) (int64, string) {
-	address := net.JoinHostPort(strings.TrimSpace(item.IP), fmt.Sprintf("%d", item.Port))
-	start := time.Now()
-	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	proxyURL, err := listenerHTTPProxyURL(item)
 	if err != nil {
-		if os.IsTimeout(err) {
-			return 0, "timeout"
-		}
 		return 0, "failed"
 	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	if err := writeHTTPProxyProbe(conn, item); err != nil {
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+	}
+	start := time.Now()
+	req, err := http.NewRequest(http.MethodGet, listenerHTTPProxyProbeURL, nil)
+	if err != nil {
 		return 0, "failed"
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	req.Header.Set("User-Agent", "tg-proxy-latency-test/1.0")
+	resp, err := client.Do(req)
 	if err != nil {
 		if os.IsTimeout(err) {
 			return 0, "timeout"
@@ -652,7 +653,7 @@ func measureHTTPProxy(item models.ListenerProxy) (int64, string) {
 		return 0, "failed"
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return 0, "failed"
 	}
 	elapsed := time.Since(start).Milliseconds()
@@ -660,24 +661,6 @@ func measureHTTPProxy(item models.ListenerProxy) (int64, string) {
 		elapsed = 1
 	}
 	return elapsed, "normal"
-}
-
-func writeHTTPProxyProbe(conn net.Conn, item models.ListenerProxy) error {
-	var builder strings.Builder
-	builder.WriteString("CONNECT ")
-	builder.WriteString(listenerProxyProbeTarget)
-	builder.WriteString(" HTTP/1.1\r\nHost: ")
-	builder.WriteString(listenerProxyProbeTarget)
-	builder.WriteString("\r\nProxy-Connection: close\r\n")
-	if strings.TrimSpace(item.Username) != "" || strings.TrimSpace(item.Password) != "" {
-		token := base64.StdEncoding.EncodeToString([]byte(item.Username + ":" + item.Password))
-		builder.WriteString("Proxy-Authorization: Basic ")
-		builder.WriteString(token)
-		builder.WriteString("\r\n")
-	}
-	builder.WriteString("\r\n")
-	_, err := conn.Write([]byte(builder.String()))
-	return err
 }
 
 func measureProxyEndpoint(ip string, port int) (int64, string) {

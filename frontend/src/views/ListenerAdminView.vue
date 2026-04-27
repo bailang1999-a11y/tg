@@ -343,7 +343,7 @@
           </div>
         </div>
         <div class="table-scroll">
-          <table class="matrix-table min-w-[900px]">
+          <table class="matrix-table min-w-[980px]">
             <thead>
               <tr>
                 <th class="select-col">
@@ -356,6 +356,7 @@
                 <th>协议</th>
                 <th>出口 IP</th>
                 <th>延迟</th>
+                <th>出口状态</th>
                 <th>地理位置</th>
                 <th>绑定终端数</th>
                 <th>操作</th>
@@ -379,6 +380,12 @@
                   </span>
                 </td>
                 <td>
+                  <span class="latency-badge" :data-tone="proxyExitTone(item)">
+                    <i>{{ proxyExitIcon(item) }}</i>
+                    {{ proxyExitStatusText(item) }}
+                  </span>
+                </td>
+                <td>
                   <span class="country-badge">
                     <i>{{ item.flag || '◇' }}</i>
                     {{ proxyCountryText(item) }}
@@ -392,7 +399,7 @@
                 </td>
                 <td><GlassButton variant="danger" size="sm" @click="deleteItem('proxy', item.id)">删除</GlassButton></td>
               </tr>
-              <tr v-if="!filteredProxies.length"><td colspan="9" class="empty-cell">暂无监听代理</td></tr>
+              <tr v-if="!filteredProxies.length"><td colspan="10" class="empty-cell">暂无监听代理</td></tr>
             </tbody>
           </table>
         </div>
@@ -1403,6 +1410,27 @@ function proxyLatencyText(item: ListenerProxy) {
   if (status === 'timeout') return '超时'
   if (status === 'failed') return '失败'
   return item.latency_ms ? `${item.latency_ms} ms` : '未检测'
+}
+
+function proxyExitTone(item: ListenerProxy) {
+  const status = (item.status || '').toLowerCase()
+  if (!status || status === 'untested') return 'unknown'
+  if (status === 'failed' || status === 'timeout') return 'bad'
+  return (item.exit_ip || '').trim() ? 'good' : 'bad'
+}
+
+function proxyExitIcon(item: ListenerProxy) {
+  const tone = proxyExitTone(item)
+  if (tone === 'good') return '●'
+  if (tone === 'bad') return '×'
+  return '○'
+}
+
+function proxyExitStatusText(item: ListenerProxy) {
+  const tone = proxyExitTone(item)
+  if (tone === 'good') return '通'
+  if (tone === 'bad') return '不通'
+  return '待检测'
 }
 
 function proxyExitIPText(item: ListenerProxy) {
