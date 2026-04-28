@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -42,6 +44,14 @@ func (s *Server) SetupBotWebhook(c *gin.Context) {
 		return
 	}
 	webhookURL = normalizeBotWebhookURL(webhookURL, config.WebhookSecret)
+	if err := validateBotWebhookURL(webhookURL); err != nil {
+		config.WebhookURL = webhookURL
+		config.LastWebhookStatus = "failed"
+		config.LastWebhookMessage = err.Error()
+		_ = s.db.WithContext(c.Request.Context()).Save(&config).Error
+		utils.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	message, err := setTelegramWebhook(config.Token, webhookURL)
 	now := time.Now()
@@ -63,6 +73,17 @@ func (s *Server) SetupBotWebhook(c *gin.Context) {
 		return
 	}
 	utils.OK(c, gin.H{"status": "success", "webhook_url": webhookURL, "message": message, "config": config})
+}
+
+func validateBotWebhookURL(webhookURL string) error {
+	parsed, err := url.Parse(webhookURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("Webhook 地址格式不正确，请填写完整的 HTTPS 公网地址")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("Telegram Webhook 必须使用 HTTPS 公网地址；当前地址是 %s。没有 HTTPS 域名时，请使用本地轮询模式", parsed.Scheme)
+	}
+	return nil
 }
 
 func (s *Server) GetBotWebhookStatus(c *gin.Context) {

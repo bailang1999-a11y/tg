@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"codex3/backend/internal/middleware"
 	"codex3/backend/internal/models"
@@ -29,7 +30,7 @@ func (w auditResponseWriter) Write(data []byte) (int, error) {
 	if w.body.Len() < auditBodyLimit {
 		remaining := auditBodyLimit - w.body.Len()
 		if len(data) > remaining {
-			w.body.Write(data[:remaining])
+			w.body.Write(auditSafeBytePrefix(data, remaining))
 		} else {
 			w.body.Write(data)
 		}
@@ -196,10 +197,10 @@ func (s *Server) writeAuditActionLog(c *gin.Context, start time.Time, requestSum
 	}
 	result := auditResultText(statusCode, responseBody)
 	durationMS := time.Since(start).Milliseconds()
+	requestSummary = auditSafeText(requestSummary)
+	result = auditSafeText(result)
 	detail := fmt.Sprintf("操作：%s；接口：%s %s；状态：%d；耗时：%dms；输入：%s；结果：%s", actionText, method, path, statusCode, durationMS, requestSummary, result)
-	if len(detail) > 1000 {
-		detail = detail[:997] + "..."
-	}
+	detail = auditTruncateText(detail, 1000)
 	payload, _ := json.Marshal(gin.H{
 		"method":      method,
 		"path":        path,
@@ -241,13 +242,49 @@ func auditResultText(statusCode int, body string) string {
 	if statusCode < 400 {
 		return "成功"
 	}
+	body = auditSafeText(body)
 	var payload struct {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(body), &payload); err == nil && strings.TrimSpace(payload.Error) != "" {
-		return payload.Error
+		return auditTruncateText(payload.Error, 300)
 	}
 	return "请求失败"
+}
+
+func auditSafeText(value string) string {
+	return strings.ToValidUTF8(value, "�")
+}
+
+func auditTruncateText(value string, maxRunes int) string {
+	value = auditSafeText(value)
+	if maxRunes <= 0 || utf8.RuneCountInString(value) <= maxRunes {
+		return value
+	}
+	runes := []rune(value)
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
+}
+
+func auditSafeBytePrefix(data []byte, maxBytes int) []byte {
+	if maxBytes <= 0 {
+		return nil
+	}
+	if len(data) <= maxBytes {
+		return data
+	}
+	prefix := data[:maxBytes]
+	for len(prefix) > 0 && !utf8.Valid(prefix) {
+		_, size := utf8.DecodeLastRune(prefix)
+		if size <= 0 || size > len(prefix) {
+			prefix = prefix[:len(prefix)-1]
+			continue
+		}
+		prefix = prefix[:len(prefix)-size]
+	}
+	return prefix
 }
 
 func auditLogAction(method, path string) string {
