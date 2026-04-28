@@ -282,7 +282,7 @@ targetLoop:
 				s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
 				continue targetLoop
 			}
-			waitUntilText := waitUntil.Local().Format("2006-01-02 15:04:05")
+			waitUntilText := waitUntil.In(terminalQuotaLocation()).Format("2006-01-02 15:04:05")
 			detail := fmt.Sprintf("%s：%s，已加入 %d 个，剩余 %d 个，冷却结束后继续监听群 %s", waitReason, waitUntilText, summary.Success, maxInt(summary.Total-done, 0), targetRef)
 			summary.Waiting = true
 			summary.WaitingReason = waitReason
@@ -468,7 +468,7 @@ func (s *Server) reserveListenerJoinQuotaWithPolicy(ctx context.Context, listene
 		}
 		now := time.Now()
 		if account.JoinCooldownUntil != nil && account.JoinCooldownUntil.After(now) {
-			return fmt.Errorf("监听账号加群冷却中，需等待到 %s", account.JoinCooldownUntil.Local().Format("2006-01-02 15:04:05"))
+			return fmt.Errorf("监听账号加群冷却中，需等待到 %s", account.JoinCooldownUntil.In(terminalQuotaLocation()).Format("2006-01-02 15:04:05"))
 		}
 		if !listenerAccountReadyForJoin(account) {
 			return fmt.Errorf("监听账号当前不可用于加群")

@@ -793,7 +793,7 @@ targetLoop:
 				s.updateJoinTaskProgress(ctx, task.ID, done, total, summary)
 				continue targetLoop
 			}
-			waitUntilText := waitUntil.Local().Format("2006-01-02 15:04:05")
+			waitUntilText := waitUntil.In(terminalQuotaLocation()).Format("2006-01-02 15:04:05")
 			detail := fmt.Sprintf("%s：%s，已加入 %d 个，剩余 %d 个，冷却结束后继续目标 %s", waitReason, waitUntilText, summary.Success, maxInt(total-done, 0), targetRef)
 			summary.Waiting = true
 			summary.WaitingReason = waitReason

@@ -790,16 +790,25 @@ func resetTerminalQuotaWindow(now time.Time, count int, resetAt *time.Time, wind
 }
 
 func nextTerminalQuotaResetAt(now time.Time, window string) time.Time {
+	location := terminalQuotaLocation()
+	local := now.In(location)
 	switch window {
 	case "hour":
-		return now.Truncate(time.Hour).Add(time.Hour)
+		return local.Truncate(time.Hour).Add(time.Hour)
 	case "day":
-		local := now.Local()
 		year, month, day := local.Date()
 		return time.Date(year, month, day+1, 0, 0, 0, 0, local.Location())
 	default:
 		return now.Add(time.Hour)
 	}
+}
+
+func terminalQuotaLocation() *time.Location {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.Local
+	}
+	return location
 }
 
 func terminalReadyForOutboundAction(item models.Terminal) bool {

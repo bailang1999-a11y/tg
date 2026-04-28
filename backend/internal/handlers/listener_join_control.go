@@ -51,7 +51,7 @@ func (s *Server) reserveListenerJoinQuota(ctx context.Context, listenerAccountID
 		}
 		now := time.Now()
 		if account.JoinCooldownUntil != nil && account.JoinCooldownUntil.After(now) {
-			return fmt.Errorf("监听账号加群冷却中，需等待到 %s", account.JoinCooldownUntil.Local().Format("2006-01-02 15:04:05"))
+			return fmt.Errorf("监听账号加群冷却中，需等待到 %s", account.JoinCooldownUntil.In(terminalQuotaLocation()).Format("2006-01-02 15:04:05"))
 		}
 		if !listenerAccountReadyForJoin(account) {
 			return fmt.Errorf("监听账号当前不可用于加群")
