@@ -44,10 +44,7 @@ func (s *Server) UpdateBotConfig(c *gin.Context) {
 	}
 	before := config
 
-	trialHours := input.TrialHours
-	if trialHours <= 0 {
-		trialHours = 5
-	}
+	trialHours := normalizeBotTrialHours(input.TrialHours)
 	features := normalizeBotFeatures(input.TrialFeatures)
 	commands := ensureRequiredBotPolicyCommands(input.EnabledCommands)
 	commandLabels := normalizeBotCommandLabels(input.CommandLabels)
@@ -86,7 +83,7 @@ func (s *Server) UpdateBotConfig(c *gin.Context) {
 	config.EnabledCommands = datatypes.JSON(commandsJSON)
 	config.CommandLabels = datatypes.JSON(commandLabelsJSON)
 	config.DefaultKeywords = datatypes.JSON(keywordsJSON)
-	config.DefaultKeywordLimit = maxInt(input.DefaultKeywordLimit, 20)
+	config.DefaultKeywordLimit = normalizeBotKeywordLimit(input.DefaultKeywordLimit)
 	config.DefaultMatchMode = normalizeSCRMMatchMode(input.DefaultMatchMode)
 	config.PrivateTerminalIDs = datatypes.JSON(privateTerminalJSON)
 	config.WelcomeTitle = strings.TrimSpace(input.WelcomeTitle)
@@ -117,8 +114,63 @@ func (s *Server) UpdateBotConfig(c *gin.Context) {
 		utils.Fail(c, http.StatusInternalServerError, "保存 Bot 配置失败")
 		return
 	}
+	if before.TrialHours != config.TrialHours {
+		s.syncBotTrialDuration(c.Request.Context(), config)
+	}
 	s.logBotConfigUpdate(c, before, config)
 	utils.OK(c, config)
+}
+
+func normalizeBotTrialHours(hours int) int {
+	if hours <= 0 {
+		return 5
+	}
+	return hours
+}
+
+func normalizeBotKeywordLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	return limit
+}
+
+func (s *Server) syncBotTrialDuration(ctx context.Context, config models.BotConfig) {
+	var subscribers []models.BotSubscriber
+	if err := s.db.WithContext(ctx).
+		Where("tenant_id = ? AND plan = ? AND trial_started_at IS NOT NULL", config.TenantID, "trial").
+		Find(&subscribers).Error; err != nil {
+		return
+	}
+	now := time.Now()
+	for _, subscriber := range subscribers {
+		if subscriber.TrialStartedAt == nil {
+			continue
+		}
+		trialEnds := subscriber.TrialStartedAt.Add(time.Duration(normalizeBotTrialHours(config.TrialHours)) * time.Hour)
+		updates := map[string]any{
+			"trial_ends_at": trialEnds,
+			"updated_at":    now,
+		}
+		if subscriber.Status != "disabled" {
+			if trialEnds.After(now) {
+				updates["status"] = "active"
+			} else {
+				updates["status"] = "expired"
+			}
+		}
+		_ = s.db.WithContext(ctx).Model(&models.BotSubscriber{}).Where("id = ?", subscriber.ID).Updates(updates).Error
+		if subscriber.UserID != nil {
+			userUpdates := map[string]any{
+				"trial_ends_at": trialEnds,
+				"updated_at":    now,
+			}
+			if status, ok := updates["status"].(string); ok {
+				userUpdates["status"] = status
+			}
+			_ = s.db.WithContext(ctx).Model(&models.User{}).Where("id = ?", *subscriber.UserID).Updates(userUpdates).Error
+		}
+	}
 }
 
 func (s *Server) logBotConfigUpdate(c *gin.Context, before models.BotConfig, after models.BotConfig) {
@@ -949,5 +1001,5 @@ func botEffectiveKeywordLimit(config models.BotConfig, subscriber models.BotSubs
 	if subscriber.KeywordLimit > 0 {
 		return subscriber.KeywordLimit
 	}
-	return maxInt(config.DefaultKeywordLimit, 20)
+	return normalizeBotKeywordLimit(config.DefaultKeywordLimit)
 }

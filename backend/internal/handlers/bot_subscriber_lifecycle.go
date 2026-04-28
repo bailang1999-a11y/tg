@@ -80,7 +80,7 @@ func (s *Server) ensureBotSubscriber(ctx context.Context, config models.BotConfi
 		s.attachWebUserToSubscriber(ctx, &subscriber)
 		return subscriber, nil
 	}
-	trialEnds := now.Add(time.Duration(maxInt(config.TrialHours, 5)) * time.Hour)
+	trialEnds := now.Add(time.Duration(normalizeBotTrialHours(config.TrialHours)) * time.Hour)
 	subscriber = models.BotSubscriber{
 		ID:                      uuid.New(),
 		TenantID:                config.TenantID,
@@ -316,14 +316,14 @@ func (s *Server) startTrialIfAvailable(ctx context.Context, config models.BotCon
 		_ = s.db.WithContext(ctx).Save(subscriber).Error
 		return "你的试用已过期，请发送 /activate 卡密 激活正式权限。"
 	}
-	trialEnds := now.Add(time.Duration(maxInt(config.TrialHours, 5)) * time.Hour)
+	trialEnds := now.Add(time.Duration(normalizeBotTrialHours(config.TrialHours)) * time.Hour)
 	subscriber.Status = "active"
 	subscriber.Plan = "trial"
 	subscriber.TrialStartedAt = &now
 	subscriber.TrialEndsAt = &trialEnds
 	subscriber.UpdatedAt = now
 	_ = s.db.WithContext(ctx).Save(subscriber).Error
-	return fmt.Sprintf("欢迎使用 Codex3 Bot，已为你开通 %d 小时试用。\n试用用户仅可使用关键词监听功能。\n到期时间：%s", maxInt(config.TrialHours, 5), trialEnds.Format("2006-01-02 15:04:05"))
+	return fmt.Sprintf("欢迎使用 Codex3 Bot，已为你开通 %d 小时试用。\n试用用户仅可使用关键词监听功能。\n到期时间：%s", normalizeBotTrialHours(config.TrialHours), trialEnds.Format("2006-01-02 15:04:05"))
 }
 
 func (s *Server) activateBotLicense(ctx context.Context, config models.BotConfig, subscriber *models.BotSubscriber, code string) (string, error) {
