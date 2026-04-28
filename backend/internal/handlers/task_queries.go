@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -53,6 +54,9 @@ func (s *Server) ListTasks(c *gin.Context) {
 		query = query.Where("CAST(payload AS TEXT) LIKE ?", "%"+botUserID+"%")
 	}
 	if err := query.Limit(limit).Offset(offset).Find(&tasks).Error; err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		utils.Fail(c, http.StatusInternalServerError, "读取任务失败")
 		return
 	}
@@ -123,7 +127,7 @@ func (s *Server) ListTasks(c *gin.Context) {
 	if len(tasks) > limit {
 		tasks = tasks[:limit]
 	}
-	utils.OK(c, s.enrichTasks(c.Request.Context(), tasks))
+	utils.OK(c, s.enrichTasks(c.Request.Context(), compactTaskListSummaries(tasks)))
 }
 
 func (s *Server) RefreshTasks(c *gin.Context) {
@@ -168,6 +172,9 @@ func (s *Server) ListTaskLogs(c *gin.Context) {
 	limit := boundedQueryInt(c, "limit", 1000, 1, 2000)
 	offset := boundedQueryInt(c, "offset", 0, 0, 1000000)
 	if err := s.db.WithContext(c.Request.Context()).Where("task_id = ?", id).Order("created_at asc").Limit(limit).Offset(offset).Find(&logs).Error; err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		utils.Fail(c, http.StatusInternalServerError, "读取日志失败")
 		return
 	}
@@ -215,10 +222,40 @@ func (s *Server) ListLogs(c *gin.Context) {
 		query = query.Where("task_id IN (?)", taskScope)
 	}
 	if err := query.Limit(limit).Offset(offset).Find(&logs).Error; err != nil {
+		if errors.Is(err, context.Canceled) {
+			return
+		}
 		utils.Fail(c, http.StatusInternalServerError, "读取日志失败")
 		return
 	}
 	utils.OK(c, s.enrichTaskLogs(c.Request.Context(), logs))
+}
+
+func compactTaskListSummaries(tasks []models.Task) []models.Task {
+	out := make([]models.Task, len(tasks))
+	for index, task := range tasks {
+		out[index] = task
+		out[index].Summary = compactTaskSummary(task.Summary)
+	}
+	return out
+}
+
+func compactTaskSummary(summary datatypes.JSON) datatypes.JSON {
+	if len(summary) == 0 || !json.Valid(summary) {
+		return summary
+	}
+	var data map[string]any
+	if err := json.Unmarshal(summary, &data); err != nil {
+		return summary
+	}
+	for _, key := range []string{"items", "stages", "results", "details"} {
+		delete(data, key)
+	}
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return summary
+	}
+	return datatypes.JSON(raw)
 }
 
 func (s *Server) taskOwnerFilter(ctx context.Context, c *gin.Context, userID uuid.UUID) (string, []any) {
