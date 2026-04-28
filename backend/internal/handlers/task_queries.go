@@ -26,7 +26,7 @@ var listenerRefNormalizePattern = regexp.MustCompile(`[^a-z0-9]+`)
 
 func (s *Server) ListTasks(c *gin.Context) {
 	var tasks []models.Task
-	limit := boundedQueryInt(c, "limit", 200, 1, 500)
+	limit := boundedQueryInt(c, "limit", 10, 1, 100)
 	offset := boundedQueryInt(c, "offset", 0, 0, 100000)
 	query := s.db.WithContext(c.Request.Context()).Order("created_at desc")
 	claims := middleware.CurrentClaims(c)

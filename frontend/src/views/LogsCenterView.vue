@@ -5,7 +5,7 @@
       subtitle="按任务类型、用户和日志级别查看详细执行记录，所有状态和动作统一用中文表达。"
     >
       <template #actions>
-        <span class="status-pill" :data-tone="socketConnected ? 'success' : 'warning'">{{ socketConnected ? '实时连接中' : '等待连接' }}</span>
+        <span class="status-pill" data-tone="info">分页加载</span>
         <GlassButton variant="danger" :loading="clearing" @click="clearAllLogs">一键清除日志</GlassButton>
         <GlassButton variant="primary" :loading="loading" @click="load">刷新日志</GlassButton>
       </template>
@@ -50,8 +50,8 @@
 
     <TableCard class="min-h-0 flex-1" :empty="!filteredLogs.length" empty-text="暂无日志">
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-steel">
-          <span>显示 {{ pagedLogs.length }} / {{ filteredLogs.length }}</span>
-          <span v-if="logs.length !== filteredLogs.length">总日志 {{ logs.length }}</span>
+          <span>第 {{ logPage }} 页，显示 {{ filteredLogs.length }} 条</span>
+          <span v-if="logs.length !== filteredLogs.length">当前页日志 {{ logs.length }}</span>
         </div>
         <table class="w-full min-w-[1180px] text-left text-sm">
           <thead class="text-steel">
@@ -68,7 +68,7 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="log in pagedLogs" :key="log.id" class="border-t border-white/8 transition hover:bg-white/5">
+            <tr v-for="log in filteredLogs" :key="log.id" class="border-t border-white/8 transition hover:bg-white/5">
               <td class="py-3 text-steel">{{ formatTime(log.created_at) }}</td>
               <td><span class="status-pill" :data-tone="levelTone(log.level)">{{ log.level_text || levelText(log.level) }}</span></td>
               <td>
@@ -93,17 +93,17 @@
               </tr>
             </tbody>
           </table>
-        <div v-if="logPageCount > 1" class="mt-4 flex flex-wrap items-center justify-end gap-2 text-sm text-steel">
-          <span>第 {{ logPage }} / {{ logPageCount }} 页</span>
-          <GlassButton variant="secondary" size="sm" :disabled="logPage <= 1" @click="logPage--">上一页</GlassButton>
-          <GlassButton variant="secondary" size="sm" :disabled="logPage >= logPageCount" @click="logPage++">下一页</GlassButton>
+        <div class="mt-4 flex flex-wrap items-center justify-end gap-2 text-sm text-steel">
+          <span>每页 {{ logPageSize }} 条</span>
+          <GlassButton variant="secondary" size="sm" :disabled="loading || logPage <= 1" @click="goPrevPage">上一页</GlassButton>
+          <GlassButton variant="secondary" size="sm" :disabled="loading || !hasNextPage" @click="goNextPage">下一页</GlassButton>
         </div>
     </TableCard>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import GlassButton from '../components/GlassButton.vue'
 import FilterCard from '../components/FilterCard.vue'
 import PageToolbar from '../components/PageToolbar.vue'
@@ -118,13 +118,10 @@ const webUsers = ref<User[]>([])
 const botUsers = ref<BotUserDashboardItem[]>([])
 const loading = ref(false)
 const clearing = ref(false)
-const socketConnected = ref(false)
 const filters = reactive({ type: '', level: '', user_id: '', bot_user_id: '' })
 const logKeyword = ref('')
 const logPage = ref(1)
-const logPageSize = 200
-const logFetchLimit = 200
-let logSocket: WebSocket | null = null
+const logPageSize = 10
 
 const taskTypeOptions = [
   { value: 'import', label: '导入任务' },
@@ -139,18 +136,6 @@ const taskTypeOptions = [
   { value: 'target_membership_refresh', label: '目标群状态刷新' }
 ]
 
-const wsURL = computed(() => {
-  const token = localStorage.getItem('codex3_token')
-  if (!token) return ''
-  const apiBase = import.meta.env.VITE_API_BASE_URL ?? ''
-  const base = apiBase !== '' ? apiBase.replace(/^http/i, 'ws') : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`
-  const query = new URLSearchParams({ access_token: token })
-  if (filters.type) query.set('type', filters.type)
-  if (filters.level) query.set('level', filters.level)
-  if (filters.user_id) query.set('user_id', filters.user_id)
-  if (filters.bot_user_id) query.set('bot_user_id', filters.bot_user_id)
-  return `${base}/api/v1/ws/logs?${query.toString()}`
-})
 const filteredLogs = computed(() => {
   const keyword = normalizeKeyword(logKeyword.value)
   if (!keyword) return logs.value
@@ -177,16 +162,12 @@ const filteredLogs = computed(() => {
     ].some((value) => normalizeKeyword(value).includes(keyword))
   })
 })
-const logPageCount = computed(() => Math.max(1, Math.ceil(filteredLogs.value.length / logPageSize)))
-const pagedLogs = computed(() => {
-  const start = (logPage.value - 1) * logPageSize
-  return filteredLogs.value.slice(start, start + logPageSize)
-})
+const hasNextPage = computed(() => logs.value.length === logPageSize)
 
 async function load() {
   loading.value = true
   try {
-    logs.value = await api.logs({ ...filters, limit: logFetchLimit })
+    logs.value = await api.logs({ ...filters, limit: logPageSize, offset: (logPage.value - 1) * logPageSize })
   } catch (err) {
     ui.toast({ title: '日志加载失败', message: err instanceof Error ? err.message : '请求失败', tone: 'error' })
   } finally {
@@ -195,8 +176,8 @@ async function load() {
 }
 
 async function loadAndReconnect() {
+  logPage.value = 1
   await load()
-  connectLogStream()
 }
 
 async function clearAllLogs() {
@@ -204,6 +185,7 @@ async function clearAllLogs() {
   try {
     const result = await api.clearLogs()
     logs.value = []
+    logPage.value = 1
     ui.toast({ title: '日志已清除', message: result.message, tone: 'success' })
   } catch (err) {
     ui.toast({ title: '清除失败', message: err instanceof Error ? err.message : '请求失败', tone: 'error' })
@@ -218,31 +200,16 @@ async function loadFilterOptions() {
   if (results[1].status === 'fulfilled') botUsers.value = results[1].value
 }
 
-function connectLogStream() {
-  if (logSocket) {
-    logSocket.close()
-    logSocket = null
-  }
-  socketConnected.value = false
-  if (!wsURL.value) return
-  logSocket = new WebSocket(wsURL.value)
-  logSocket.onopen = () => {
-    socketConnected.value = true
-  }
-  logSocket.onclose = () => {
-    socketConnected.value = false
-  }
-  logSocket.onerror = () => {
-    socketConnected.value = false
-  }
-  logSocket.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data) as { type?: string; data?: TaskLog[]; error?: string }
-      if (payload.type === 'logs' && Array.isArray(payload.data)) logs.value = payload.data
-    } catch {
-      socketConnected.value = false
-    }
-  }
+async function goPrevPage() {
+  if (logPage.value <= 1 || loading.value) return
+  logPage.value--
+  await load()
+}
+
+async function goNextPage() {
+  if (!hasNextPage.value || loading.value) return
+  logPage.value++
+  await load()
 }
 
 function botName(user: BotUserDashboardItem) {
@@ -362,18 +329,10 @@ function normalizeKeyword(value: unknown) {
 }
 
 watch(logKeyword, () => {
-  logPage.value = 1
-})
-watch(logPageCount, (count) => {
-  if (logPage.value > count) logPage.value = count
+  // 搜索只过滤当前页，不额外拉取大批量日志。
 })
 
 onMounted(async () => {
   await Promise.all([loadFilterOptions(), load()])
-  connectLogStream()
-})
-
-onBeforeUnmount(() => {
-  if (logSocket) logSocket.close()
 })
 </script>
