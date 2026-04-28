@@ -387,7 +387,7 @@ function settingText(item: { label: string; value: string }) {
 function taskReason(task: Task) {
   const summary = (task.summary || {}) as Record<string, unknown>
   const payload = (task.payload || {}) as Record<string, unknown>
-  const keys = ['reason', 'stop_reason', 'pause_reason', 'error', 'last_error']
+  const keys = ['waiting_reason', 'reason', 'stop_reason', 'pause_reason', 'error', 'last_error']
   for (const key of keys) {
     const value = summary[key] ?? payload[key]
     if (typeof value === 'string' && value.trim() !== '') return value.trim()

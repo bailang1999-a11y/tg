@@ -553,8 +553,13 @@ type joinTargetsSummary struct {
 	Success       int                    `json:"success"`
 	Failed        int                    `json:"failed"`
 	Skipped       int                    `json:"skipped"`
+	Pending       int                    `json:"pending"`
 	Terminals     int                    `json:"terminals"`
 	Targets       int                    `json:"targets"`
+	Waiting       bool                   `json:"waiting"`
+	WaitingReason string                 `json:"waiting_reason,omitempty"`
+	WaitingUntil  string                 `json:"waiting_until,omitempty"`
+	CurrentTarget string                 `json:"current_target,omitempty"`
 	TopSkipReason string                 `json:"top_skip_reason,omitempty"`
 	SkipReasons   map[string]int         `json:"skip_reasons,omitempty"`
 	Items         []joinTargetsResultRow `json:"items"`
@@ -729,6 +734,7 @@ func (s *Server) runJoinTargetsTask(ctx context.Context, task models.Task, termi
 		Terminals:   len(terminals),
 		Targets:     len(targets),
 		Total:       len(targets),
+		Pending:     len(targets),
 		SkipReasons: map[string]int{},
 		Items:       []joinTargetsResultRow{},
 	}
@@ -745,8 +751,11 @@ func (s *Server) runJoinTargetsTask(ctx context.Context, task models.Task, termi
 	done := 0
 targetLoop:
 	for _, target := range targets {
-		done++
 		targetRef := targetJoinLabel(target)
+		summary.CurrentTarget = targetRef
+		summary.Waiting = false
+		summary.WaitingReason = ""
+		summary.WaitingUntil = ""
 		row := joinTargetsResultRow{
 			TargetID: target.ID.String(),
 			Target:   targetRef,
@@ -758,17 +767,20 @@ targetLoop:
 			accumulateSkipReason(summary.SkipReasons, row.Reason)
 			summary.Items = append(summary.Items, row)
 			_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
-			s.updateJoinTaskProgress(ctx, task.ID, done, total)
+			done++
+			s.updateJoinTaskProgress(ctx, task.ID, done, total, summary)
 			continue
 		}
 		var terminalIndex int
 		var terminal models.Terminal
 		for {
 			var quotaErr error
+			terminals = s.refreshJoinTargetTerminals(ctx, task.TenantID, terminals)
 			terminalIndex, terminal, quotaErr = s.pickJoinTargetTerminal(ctx, task.TenantID, terminals, target)
 			if quotaErr == nil {
 				break
 			}
+			terminals = s.refreshJoinTargetTerminals(ctx, task.TenantID, terminals)
 			waitUntil, waitReason := s.nextJoinTargetTerminalRetryAt(ctx, task.TenantID, terminals, target)
 			if waitUntil == nil || !waitUntil.After(time.Now()) {
 				row.Status = "skipped"
@@ -777,10 +789,16 @@ targetLoop:
 				accumulateSkipReason(summary.SkipReasons, row.Reason)
 				summary.Items = append(summary.Items, row)
 				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
-				s.updateJoinTaskProgress(ctx, task.ID, done, total)
+				done++
+				s.updateJoinTaskProgress(ctx, task.ID, done, total, summary)
 				continue targetLoop
 			}
-			detail := fmt.Sprintf("%s：%s，继续目标 %s", waitReason, waitUntil.Local().Format("2006-01-02 15:04:05"), targetRef)
+			waitUntilText := waitUntil.Local().Format("2006-01-02 15:04:05")
+			detail := fmt.Sprintf("%s：%s，已加入 %d 个，剩余 %d 个，冷却结束后继续目标 %s", waitReason, waitUntilText, summary.Success, maxInt(total-done, 0), targetRef)
+			summary.Waiting = true
+			summary.WaitingReason = waitReason
+			summary.WaitingUntil = waitUntilText
+			s.updateJoinTaskProgress(ctx, task.ID, done, total, summary)
 			_ = s.createTaskLog(ctx, task, "INFO", "quota_wait", detail, "", targetRef)
 			timer := time.NewTimer(time.Until(*waitUntil))
 			select {
@@ -792,9 +810,13 @@ targetLoop:
 				accumulateSkipReason(summary.SkipReasons, row.Reason)
 				summary.Items = append(summary.Items, row)
 				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
-				s.updateJoinTaskProgress(ctx, task.ID, done, total)
+				done++
+				s.updateJoinTaskProgress(ctx, task.ID, done, total, summary)
 				continue targetLoop
 			case <-timer.C:
+				summary.Waiting = false
+				summary.WaitingReason = ""
+				summary.WaitingUntil = ""
 			}
 		}
 		terminalRef := terminalTargetImportLabel(terminal)
@@ -830,9 +852,14 @@ targetLoop:
 			_ = s.createTaskLogWithDuration(ctx, task, "ERROR", "join_failed", firstNonEmpty(row.Reason, "加群失败"), terminalRef, targetRef, duration)
 		}
 		summary.Items = append(summary.Items, row)
-		s.updateJoinTaskProgress(ctx, task.ID, done, total)
+		done++
+		s.updateJoinTaskProgress(ctx, task.ID, done, total, summary)
 	}
 
+	summary.Waiting = false
+	summary.WaitingReason = ""
+	summary.WaitingUntil = ""
+	summary.CurrentTarget = ""
 	status := "success"
 	switch {
 	case summary.Success == 0 && (summary.Failed > 0 || summary.Skipped > 0):
@@ -846,8 +873,7 @@ targetLoop:
 }
 
 func (s *Server) RunJoinTargetsTask(taskID uuid.UUID) {
-	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-	defer cancel()
+	ctx := context.Background()
 	claimed, release := s.claimTaskRun(ctx, taskID, "join_targets")
 	if !claimed {
 		return
@@ -972,10 +998,17 @@ func (s *Server) nextJoinTargetTerminalRetryAt(ctx context.Context, tenantID uui
 	settings := s.readSystemSettings(ctx, tenantID)
 	var earliest *time.Time
 	for _, terminal := range terminals {
-		if !terminalReadyForOutboundAction(terminal) || !s.terminalTargetAvailable(ctx, tenantID, terminal.ID, terminalQuotaActionJoin, target.Type, target.Identifier) {
+		if !terminalReadyForOutboundAction(terminal) {
 			continue
 		}
 		blockedUntil := joinTerminalBlockedUntil(now, terminal, settings.RiskControl)
+		targetBlockedUntil, targetBlockedForever := s.terminalTargetBlockedUntil(ctx, tenantID, terminal.ID, terminalQuotaActionJoin, target.Type, target.Identifier)
+		if targetBlockedForever {
+			continue
+		}
+		if targetBlockedUntil != nil && (blockedUntil == nil || targetBlockedUntil.After(*blockedUntil)) {
+			blockedUntil = targetBlockedUntil
+		}
 		if blockedUntil == nil {
 			return nil, ""
 		}
@@ -988,6 +1021,64 @@ func (s *Server) nextJoinTargetTerminalRetryAt(ctx context.Context, tenantID uui
 		return nil, ""
 	}
 	return earliest, "可用加群账号均在冷却或限额窗口中，任务将等待下一次可用时间"
+}
+
+func (s *Server) refreshJoinTargetTerminals(ctx context.Context, tenantID uuid.UUID, terminals []models.Terminal) []models.Terminal {
+	if len(terminals) == 0 {
+		return terminals
+	}
+	ids := make([]uuid.UUID, 0, len(terminals))
+	for _, terminal := range terminals {
+		ids = append(ids, terminal.ID)
+	}
+	var latest []models.Terminal
+	query := s.db.WithContext(ctx).Where("id IN ?", ids)
+	if tenantID != uuid.Nil {
+		query = query.Where("tenant_id = ?", tenantID)
+	}
+	if err := query.Find(&latest).Error; err != nil {
+		return terminals
+	}
+	byID := make(map[uuid.UUID]models.Terminal, len(latest))
+	for _, terminal := range latest {
+		byID[terminal.ID] = terminal
+	}
+	refreshed := make([]models.Terminal, len(terminals))
+	copy(refreshed, terminals)
+	for index, terminal := range terminals {
+		if item, ok := byID[terminal.ID]; ok {
+			refreshed[index] = item
+		}
+	}
+	return refreshed
+}
+
+func (s *Server) terminalTargetBlockedUntil(ctx context.Context, tenantID uuid.UUID, terminalID uuid.UUID, action terminalQuotaAction, targetType string, targetValue string) (*time.Time, bool) {
+	key := terminalTargetKey(action, targetType, targetValue)
+	if key == "" {
+		return nil, false
+	}
+	query := s.db.WithContext(ctx).
+		Where("terminal_id = ? AND action = ? AND target_key = ?", terminalID, string(action), key)
+	if tenantID != uuid.Nil {
+		query = query.Where("tenant_id = ?", tenantID)
+	}
+	var restrictions []models.TerminalTargetRestriction
+	if err := query.Find(&restrictions).Error; err != nil || len(restrictions) == 0 {
+		return nil, false
+	}
+	now := time.Now()
+	var latest *time.Time
+	for _, restriction := range restrictions {
+		if restriction.CooldownUntil == nil {
+			return nil, true
+		}
+		if restriction.CooldownUntil.After(now) && (latest == nil || restriction.CooldownUntil.After(*latest)) {
+			value := *restriction.CooldownUntil
+			latest = &value
+		}
+	}
+	return latest, false
 }
 
 func joinTerminalBlockedUntil(now time.Time, terminal models.Terminal, settings systemRiskControlSettings) *time.Time {
@@ -1037,7 +1128,7 @@ func terminalOlderForJoin(candidate models.Terminal, current models.Terminal) bo
 	return candidate.CreatedAt.Before(current.CreatedAt)
 }
 
-func (s *Server) updateJoinTaskProgress(ctx context.Context, taskID uuid.UUID, done int, total int) {
+func (s *Server) updateJoinTaskProgress(ctx context.Context, taskID uuid.UUID, done int, total int, summary joinTargetsSummary) {
 	progress := 1
 	if total > 0 {
 		progress = 1 + int(float64(done)/float64(total)*98)
@@ -1045,7 +1136,12 @@ func (s *Server) updateJoinTaskProgress(ctx context.Context, taskID uuid.UUID, d
 	if progress > 99 {
 		progress = 99
 	}
-	_ = s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", taskID).Update("progress", progress).Error
+	summary.Pending = maxInt(total-done, 0)
+	summaryBytes, _ := json.Marshal(summary)
+	_ = s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", taskID).Updates(map[string]any{
+		"progress": progress,
+		"summary":  datatypes.JSON(summaryBytes),
+	}).Error
 }
 
 func (s *Server) finishJoinTargetsTask(ctx context.Context, task models.Task, status string, summary joinTargetsSummary, detail string) {
