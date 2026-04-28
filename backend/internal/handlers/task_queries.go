@@ -176,7 +176,7 @@ func (s *Server) ListTaskLogs(c *gin.Context) {
 
 func (s *Server) ListLogs(c *gin.Context) {
 	var logs []models.TaskLog
-	limit := boundedQueryInt(c, "limit", 1000, 1, 1000)
+	limit := boundedQueryInt(c, "limit", 200, 1, 500)
 	offset := boundedQueryInt(c, "offset", 0, 0, 1000000)
 	query := s.db.WithContext(c.Request.Context()).Order("created_at desc")
 	taskScope := s.db.WithContext(c.Request.Context()).
@@ -288,11 +288,7 @@ func (s *Server) enrichTaskLogs(ctx context.Context, logs []models.TaskLog) []ta
 	}
 	var tasks []models.Task
 	_ = s.db.WithContext(ctx).Where("id IN ?", taskIDs).Find(&tasks).Error
-	enrichedTasks := s.enrichTasks(ctx, tasks)
-	taskMap := map[uuid.UUID]taskListItem{}
-	for _, task := range enrichedTasks {
-		taskMap[task.ID] = task
-	}
+	taskMap := s.enrichLogTasks(ctx, tasks)
 	refDisplayMap := s.buildLogTerminalRefDisplayMap(ctx, logs)
 	out := make([]taskLogItem, 0, len(logs))
 	for _, log := range logs {
@@ -313,6 +309,97 @@ func (s *Server) enrichTaskLogs(ctx context.Context, logs []models.TaskLog) []ta
 		out = append(out, item)
 	}
 	return out
+}
+
+func (s *Server) enrichLogTasks(ctx context.Context, tasks []models.Task) map[uuid.UUID]taskLogTaskItem {
+	taskMap := map[uuid.UUID]taskLogTaskItem{}
+	if len(tasks) == 0 {
+		return taskMap
+	}
+	userIDs := make([]uuid.UUID, 0)
+	botIDs := make([]uuid.UUID, 0)
+	seenUsers := map[uuid.UUID]bool{}
+	seenBots := map[uuid.UUID]bool{}
+	for _, task := range tasks {
+		if task.CreatedBy != nil && !seenUsers[*task.CreatedBy] {
+			userIDs = append(userIDs, *task.CreatedBy)
+			seenUsers[*task.CreatedBy] = true
+		}
+		if botID, ok := taskBotSubscriberID(task); ok && !seenBots[botID] {
+			botIDs = append(botIDs, botID)
+			seenBots[botID] = true
+		}
+	}
+
+	userMap := map[uuid.UUID]models.User{}
+	if len(userIDs) > 0 {
+		var users []models.User
+		_ = s.db.WithContext(ctx).Where("id IN ?", userIDs).Find(&users).Error
+		for _, user := range users {
+			userMap[user.ID] = user
+		}
+	}
+
+	botMap := map[uuid.UUID]models.BotSubscriber{}
+	if len(botIDs) > 0 {
+		var subscribers []models.BotSubscriber
+		_ = s.db.WithContext(ctx).Where("id IN ?", botIDs).Find(&subscribers).Error
+		for _, subscriber := range subscribers {
+			botMap[subscriber.ID] = subscriber
+		}
+	}
+
+	for _, task := range tasks {
+		item := taskLogTaskItem{
+			ID:        task.ID,
+			Name:      task.Name,
+			Type:      task.Type,
+			Status:    task.Status,
+			Progress:  task.Progress,
+			Payload:   taskLogPayload(task),
+			CreatedAt: task.CreatedAt,
+			UpdatedAt: task.UpdatedAt,
+		}
+		if task.CreatedBy != nil {
+			if user, ok := userMap[*task.CreatedBy]; ok {
+				item.Creator = &taskUserRef{
+					ID:               user.ID.String(),
+					Username:         user.Username,
+					Role:             user.Role,
+					TelegramUserID:   user.TelegramUserID,
+					TelegramUsername: user.TelegramUsername,
+				}
+			}
+		}
+		if botID, ok := taskBotSubscriberID(task); ok {
+			if subscriber, exists := botMap[botID]; exists {
+				item.BotUser = &taskBotUserRef{
+					ID:             subscriber.ID.String(),
+					Nickname:       botSubscriberDisplayName(subscriber),
+					Username:       subscriber.Username,
+					TelegramUserID: subscriber.TelegramUserID,
+					Status:         botSubscriberStatusText(subscriber),
+					Plan:           botPlanText(subscriber.Plan),
+				}
+			}
+		}
+		taskMap[task.ID] = item
+	}
+	return taskMap
+}
+
+func taskLogPayload(task models.Task) datatypes.JSON {
+	if len(task.Payload) == 0 || !json.Valid(task.Payload) {
+		return nil
+	}
+	var payload struct {
+		BotSubscriberID string `json:"bot_subscriber_id,omitempty"`
+	}
+	if err := json.Unmarshal(task.Payload, &payload); err != nil || strings.TrimSpace(payload.BotSubscriberID) == "" {
+		return nil
+	}
+	data, _ := json.Marshal(payload)
+	return datatypes.JSON(data)
 }
 
 func (s *Server) buildLogTerminalRefDisplayMap(ctx context.Context, logs []models.TaskLog) map[string]string {

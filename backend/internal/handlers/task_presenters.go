@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"codex3/backend/internal/models"
 
@@ -46,9 +47,22 @@ type taskListItem struct {
 
 type taskLogItem struct {
 	models.TaskLog
-	Task       *taskListItem `json:"task,omitempty"`
-	LevelText  string        `json:"level_text"`
-	ActionText string        `json:"action_text"`
+	Task       *taskLogTaskItem `json:"task,omitempty"`
+	LevelText  string           `json:"level_text"`
+	ActionText string           `json:"action_text"`
+}
+
+type taskLogTaskItem struct {
+	ID        uuid.UUID       `json:"id"`
+	Name      string          `json:"name"`
+	Type      string          `json:"type"`
+	Status    string          `json:"status"`
+	Progress  int             `json:"progress"`
+	Payload   datatypes.JSON  `json:"payload,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+	Creator   *taskUserRef    `json:"creator,omitempty"`
+	BotUser   *taskBotUserRef `json:"bot_user,omitempty"`
 }
 
 func taskBotSubscriberID(task models.Task) (uuid.UUID, bool) {

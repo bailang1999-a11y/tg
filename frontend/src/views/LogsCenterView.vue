@@ -123,6 +123,7 @@ const filters = reactive({ type: '', level: '', user_id: '', bot_user_id: '' })
 const logKeyword = ref('')
 const logPage = ref(1)
 const logPageSize = 200
+const logFetchLimit = 200
 let logSocket: WebSocket | null = null
 
 const taskTypeOptions = [
@@ -185,7 +186,7 @@ const pagedLogs = computed(() => {
 async function load() {
   loading.value = true
   try {
-    logs.value = await api.logs({ ...filters, limit: 1000 })
+    logs.value = await api.logs({ ...filters, limit: logFetchLimit })
   } catch (err) {
     ui.toast({ title: '日志加载失败', message: err instanceof Error ? err.message : '请求失败', tone: 'error' })
   } finally {
