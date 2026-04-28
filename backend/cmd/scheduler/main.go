@@ -49,6 +49,7 @@ func main() {
 
 	runMaintenance(ctx, cfg, db)
 	lastMaintenanceAt := time.Now()
+	recoverWaitingListenerJoinTasks(ctx, db, publisher)
 	runScheduledListenerAccountChecks(ctx, db, publisher)
 	runScheduledListenerProxyChecks(ctx, db, publisher)
 	ticker := time.NewTicker(time.Minute)
@@ -74,9 +75,58 @@ func main() {
 				runMaintenance(ctx, cfg, db)
 				lastMaintenanceAt = time.Now()
 			}
+			recoverWaitingListenerJoinTasks(ctx, db, publisher)
 			runScheduledListenerAccountChecks(ctx, db, publisher)
 			runScheduledListenerProxyChecks(ctx, db, publisher)
 		}
+	}
+}
+
+func recoverWaitingListenerJoinTasks(ctx context.Context, db *gorm.DB, publisher *taskqueue.Publisher) {
+	if publisher == nil {
+		return
+	}
+	cutoff := time.Now().Add(-5 * time.Minute)
+	var tasks []models.Task
+	if err := db.WithContext(ctx).
+		Where("type = ? AND status = ? AND updated_at < ?", "listener_join_targets", "running", cutoff).
+		Where("summary ->> 'waiting' = ?", "true").
+		Find(&tasks).Error; err != nil {
+		log.Printf("recover listener join tasks lookup failed: %v", err)
+		return
+	}
+	for _, task := range tasks {
+		if err := db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
+			"status":        "queued",
+			"run_id":        "",
+			"run_locked_at": nil,
+			"updated_at":    time.Now(),
+		}).Error; err != nil {
+			log.Printf("recover listener join task reset failed task=%s: %v", task.ID, err)
+			continue
+		}
+		_ = db.WithContext(ctx).Create(&models.TaskLog{
+			ID:        uuid.New(),
+			TenantID:  task.TenantID,
+			TaskID:    task.ID,
+			Level:     "WARN",
+			Category:  task.Type,
+			Action:    "recover_waiting_task",
+			Details:   "监听号自动加群任务处于等待状态且运行锁已失效，已重新投递继续执行。",
+			TraceID:   uuid.NewString(),
+			CreatedAt: time.Now(),
+		}).Error
+		if err := publisher.PublishTask(ctx, taskqueue.TaskMessage{
+			TaskID:    task.ID,
+			TenantID:  task.TenantID,
+			Type:      task.Type,
+			Action:    "run",
+			CreatedAt: time.Now(),
+		}); err != nil {
+			log.Printf("recover listener join task publish failed task=%s: %v", task.ID, err)
+			continue
+		}
+		log.Printf("recovered waiting listener join task id=%s", task.ID)
 	}
 }
 
