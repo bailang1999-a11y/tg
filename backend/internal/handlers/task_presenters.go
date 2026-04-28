@@ -127,6 +127,16 @@ func taskSettings(task models.Task) []taskSettingItem {
 		addSummary("waiting_reason", "等待状态")
 		addSummary("waiting_until", "预计恢复")
 		addSummary("top_skip_reason", "主要拦截原因")
+	case "listener_join_targets":
+		addSummary("total", "监听群总数")
+		addSummary("success", "成功")
+		addSummary("failed", "失败")
+		addSummary("skipped", "跳过")
+		addSummary("pending", "剩余")
+		addSummary("current_target", "当前监听群")
+		addSummary("waiting_reason", "等待状态")
+		addSummary("waiting_until", "预计恢复")
+		addSummary("top_skip_reason", "主要拦截原因")
 	case "listener_proxy_check":
 		addSummary("total", "代理总数")
 		addSummary("normal", "正常")

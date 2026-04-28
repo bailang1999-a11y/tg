@@ -39,8 +39,13 @@ type listenerJoinTargetsSummary struct {
 	Success       int                    `json:"success"`
 	Failed        int                    `json:"failed"`
 	Skipped       int                    `json:"skipped"`
+	Pending       int                    `json:"pending"`
 	DailyLimit    int                    `json:"daily_limit"`
 	Interval      int                    `json:"interval_minutes"`
+	Waiting       bool                   `json:"waiting"`
+	WaitingReason string                 `json:"waiting_reason,omitempty"`
+	WaitingUntil  string                 `json:"waiting_until,omitempty"`
+	CurrentTarget string                 `json:"current_target,omitempty"`
 	TopSkipReason string                 `json:"top_skip_reason,omitempty"`
 	SkipReasons   map[string]int         `json:"skip_reasons,omitempty"`
 	Items         []joinTargetsResultRow `json:"items"`
@@ -157,8 +162,7 @@ func (s *Server) resolveListenerJoinTargets(c *gin.Context, req listenerJoinTarg
 }
 
 func (s *Server) RunListenerJoinTargetsTask(taskID uuid.UUID) {
-	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-	defer cancel()
+	ctx := context.Background()
 	claimed, release := s.claimTaskRun(ctx, taskID, "listener_join_targets")
 	if !claimed {
 		return
@@ -228,6 +232,7 @@ func (s *Server) runListenerJoinTargetsTask(ctx context.Context, task models.Tas
 		Accounts:    len(accounts),
 		Targets:     len(listenerTargets),
 		Total:       len(targets),
+		Pending:     len(targets),
 		DailyLimit:  req.DailyLimit,
 		Interval:    req.IntervalMinutes,
 		SkipReasons: map[string]int{},
@@ -235,8 +240,14 @@ func (s *Server) runListenerJoinTargetsTask(ctx context.Context, task models.Tas
 	}
 	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始监听号自动加群：%d 个监听号，%d 个监听群，优先未覆盖目标", len(accounts), len(targets)), "", "")
 	joiner := telegram_client.NewJoiner(s.cfg)
-	for index, target := range targets {
+	done := 0
+targetLoop:
+	for _, target := range targets {
 		targetRef := targetJoinLabel(target)
+		summary.CurrentTarget = targetRef
+		summary.Waiting = false
+		summary.WaitingReason = ""
+		summary.WaitingUntil = ""
 		row := joinTargetsResultRow{TargetID: target.ID.String(), Target: targetRef}
 		if !isJoinableTargetType(target.Type) {
 			row.Status = "skipped"
@@ -245,19 +256,57 @@ func (s *Server) runListenerJoinTargetsTask(ctx context.Context, task models.Tas
 			accumulateSkipReason(summary.SkipReasons, row.Reason)
 			summary.Items = append(summary.Items, row)
 			_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
-			s.updateListenerJoinTargetsProgress(ctx, task.ID, index+1, summary.Total)
+			done++
+			s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
 			continue
 		}
-		accountIndex, account, quotaErr := s.pickListenerJoinAccount(ctx, accounts, target, req)
-		if quotaErr != nil {
-			row.Status = "skipped"
-			row.Reason = quotaErr.Error()
-			summary.Skipped++
-			accumulateSkipReason(summary.SkipReasons, row.Reason)
-			summary.Items = append(summary.Items, row)
-			_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
-			s.updateListenerJoinTargetsProgress(ctx, task.ID, index+1, summary.Total)
-			continue
+		var accountIndex int
+		var account models.ListenerAccount
+		for {
+			var quotaErr error
+			accounts = s.refreshListenerJoinAccounts(ctx, accounts)
+			accountIndex, account, quotaErr = s.pickListenerJoinAccount(ctx, accounts, target, req)
+			if quotaErr == nil {
+				break
+			}
+			accounts = s.refreshListenerJoinAccounts(ctx, accounts)
+			waitUntil, waitReason := s.nextListenerJoinAccountRetryAt(ctx, accounts, target, req)
+			if waitUntil == nil || !waitUntil.After(time.Now()) {
+				row.Status = "skipped"
+				row.Reason = quotaErr.Error()
+				summary.Skipped++
+				accumulateSkipReason(summary.SkipReasons, row.Reason)
+				summary.Items = append(summary.Items, row)
+				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
+				done++
+				s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
+				continue targetLoop
+			}
+			waitUntilText := waitUntil.Local().Format("2006-01-02 15:04:05")
+			detail := fmt.Sprintf("%s：%s，已加入 %d 个，剩余 %d 个，冷却结束后继续监听群 %s", waitReason, waitUntilText, summary.Success, maxInt(summary.Total-done, 0), targetRef)
+			summary.Waiting = true
+			summary.WaitingReason = waitReason
+			summary.WaitingUntil = waitUntilText
+			s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
+			_ = s.createTaskLog(ctx, task, "INFO", "quota_wait", detail, "", targetRef)
+			timer := time.NewTimer(time.Until(*waitUntil))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				row.Status = "skipped"
+				row.Reason = "任务等待监听号冷却时被取消"
+				summary.Skipped++
+				accumulateSkipReason(summary.SkipReasons, row.Reason)
+				summary.Items = append(summary.Items, row)
+				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
+				done++
+				s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
+				continue targetLoop
+			case <-timer.C:
+				summary.Waiting = false
+				summary.WaitingReason = ""
+				summary.WaitingUntil = ""
+			}
 		}
 		accountRef := listenerAccountJoinLabel(account)
 		row.TerminalID = account.ID.String()
@@ -286,8 +335,13 @@ func (s *Server) runListenerJoinTargetsTask(ctx context.Context, task models.Tas
 			_ = s.createTaskLogWithDuration(ctx, task, "ERROR", "join_failed", firstNonEmpty(row.Reason, "监听号加群失败"), accountRef, targetRef, duration)
 		}
 		summary.Items = append(summary.Items, row)
-		s.updateListenerJoinTargetsProgress(ctx, task.ID, index+1, summary.Total)
+		done++
+		s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
 	}
+	summary.Waiting = false
+	summary.WaitingReason = ""
+	summary.WaitingUntil = ""
+	summary.CurrentTarget = ""
 	status := "success"
 	if summary.Success == 0 && (summary.Failed > 0 || summary.Skipped > 0) {
 		status = "failed"
@@ -336,6 +390,76 @@ func (s *Server) pickListenerJoinAccount(ctx context.Context, accounts []models.
 	return -1, models.ListenerAccount{}, fmt.Errorf("没有可用监听号")
 }
 
+func (s *Server) refreshListenerJoinAccounts(ctx context.Context, accounts []models.ListenerAccount) []models.ListenerAccount {
+	if len(accounts) == 0 {
+		return accounts
+	}
+	ids := make([]uuid.UUID, 0, len(accounts))
+	for _, account := range accounts {
+		ids = append(ids, account.ID)
+	}
+	var latest []models.ListenerAccount
+	if err := s.db.WithContext(ctx).Where("id IN ? AND tenant_id = ?", ids, uuid.Nil).Find(&latest).Error; err != nil {
+		return accounts
+	}
+	byID := make(map[uuid.UUID]models.ListenerAccount, len(latest))
+	for _, account := range latest {
+		byID[account.ID] = account
+	}
+	refreshed := make([]models.ListenerAccount, len(accounts))
+	copy(refreshed, accounts)
+	for index, account := range accounts {
+		if item, ok := byID[account.ID]; ok {
+			refreshed[index] = item
+		}
+	}
+	return refreshed
+}
+
+func (s *Server) nextListenerJoinAccountRetryAt(ctx context.Context, accounts []models.ListenerAccount, target models.Target, req listenerJoinTargetsRequest) (*time.Time, string) {
+	now := time.Now()
+	var earliest *time.Time
+	for _, account := range accounts {
+		if req.SkipAlreadyJoined && s.accountTargetAlreadyJoined(ctx, uuid.Nil, accountJoinKindListener, account.ID, target) {
+			continue
+		}
+		if !listenerAccountReadyForJoin(account) {
+			continue
+		}
+		blockedUntil := listenerJoinAccountBlockedUntil(now, account, req)
+		if blockedUntil == nil {
+			return nil, ""
+		}
+		if earliest == nil || blockedUntil.Before(*earliest) {
+			value := *blockedUntil
+			earliest = &value
+		}
+	}
+	if earliest == nil {
+		return nil, ""
+	}
+	return earliest, "可用监听号均在冷却或每日限额窗口中，任务将等待下一次可用时间"
+}
+
+func listenerJoinAccountBlockedUntil(now time.Time, account models.ListenerAccount, req listenerJoinTargetsRequest) *time.Time {
+	var blockedUntil *time.Time
+	pushBlockedUntil := func(value *time.Time) {
+		if value == nil || !value.After(now) {
+			return
+		}
+		if blockedUntil == nil || value.After(*blockedUntil) {
+			next := *value
+			blockedUntil = &next
+		}
+	}
+	pushBlockedUntil(account.JoinCooldownUntil)
+	dailyCount, dailyResetAt := resetTerminalQuotaWindow(now, account.JoinDailyCount, account.JoinDailyResetAt, "day")
+	if req.DailyLimit > 0 && dailyCount >= req.DailyLimit {
+		pushBlockedUntil(dailyResetAt)
+	}
+	return blockedUntil
+}
+
 func (s *Server) reserveListenerJoinQuotaWithPolicy(ctx context.Context, listenerAccountID uuid.UUID, dailyLimit int, intervalMinutes int) (models.ListenerAccount, error) {
 	var account models.ListenerAccount
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -371,7 +495,7 @@ func (s *Server) reserveListenerJoinQuotaWithPolicy(ctx context.Context, listene
 	return account, err
 }
 
-func (s *Server) updateListenerJoinTargetsProgress(ctx context.Context, taskID uuid.UUID, done int, total int) {
+func (s *Server) updateListenerJoinTargetsProgress(ctx context.Context, taskID uuid.UUID, done int, total int, summary listenerJoinTargetsSummary) {
 	progress := 100
 	if total > 0 {
 		progress = 5 + int(float64(done)/float64(total)*90)
@@ -379,7 +503,12 @@ func (s *Server) updateListenerJoinTargetsProgress(ctx context.Context, taskID u
 			progress = 95
 		}
 	}
-	s.updateTaskProgressContext(ctx, taskID, progress)
+	summary.Pending = maxInt(total-done, 0)
+	payload, _ := json.Marshal(summary)
+	_ = s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", taskID).Updates(map[string]any{
+		"progress": progress,
+		"summary":  datatypes.JSON(payload),
+	}).Error
 }
 
 func (s *Server) finishListenerJoinTargetsTask(ctx context.Context, task models.Task, status string, summary listenerJoinTargetsSummary, detail string) {
