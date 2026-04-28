@@ -3,96 +3,130 @@
     <div class="page-header">
       <div>
         <h1 class="page-title">账号管理</h1>
-        <p class="page-subtitle">账号状态和在线状态已拆开：状态表示账号是否可用，心跳表示当前在线/离线与最后在线时间。</p>
+        <p class="page-subtitle">把账号池、分组筛选、风控队列、批量处理和单账号限额收进一个管理模块，列表每页最多展示 10 个账号。</p>
       </div>
       <div class="page-actions">
         <GlassButton variant="secondary" :loading="loading" @click="load">刷新</GlassButton>
-        <GlassButton variant="secondary" @click="view = view === 'table' ? 'card' : 'table'">{{ view === 'table' ? '卡片视图' : '列表视图' }}</GlassButton>
         <GlassButton variant="primary" :loading="checking && checkScope === 'all'" @click="check('all')">一键检测账号状态</GlassButton>
       </div>
     </div>
 
-    <div class="grid flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
-      <GlassCard class="flex min-h-[68vh] flex-col overflow-hidden">
-        <div class="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div class="text-xs uppercase tracking-[0.16em] text-steel">Terminal Workspace</div>
-            <h2 class="mt-2 text-xl font-black">终端列表</h2>
-            <p class="mt-2 text-sm text-steel">点击任意一行可高亮并在右侧查看详情，列表本身已按你要求切成标准化双行信息块。</p>
-          </div>
-          <GroupSelect v-model="groupID" :groups="groups" :loading="groupLoading" @create="createGroup" />
+    <div class="account-module-layout">
+      <GlassCard class="account-control-panel">
+        <div>
+          <div class="text-xs uppercase tracking-[0.16em] text-steel">Account Module</div>
+          <h2 class="mt-2 text-xl font-black">账号工作台</h2>
+          <p class="mt-2 text-sm leading-6 text-steel">先按分组、状态和风险收窄账号池，再对当前页或已选账号做检测、降频、解除冷却。</p>
         </div>
 
-        <div class="mt-5 grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
-          <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
-            <div class="text-sm text-steel">搜索账号</div>
-            <input v-model="keyword" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" placeholder="手机号 / 昵称 / 个性签名 / 个人频道" />
+        <div class="account-control-section">
+          <div class="account-section-title">分组与搜索</div>
+          <GroupSelect v-model="groupID" :groups="groups" :loading="groupLoading" @create="createGroup" />
+          <label class="account-search-box">
+            <span>搜索账号</span>
+            <input v-model="keyword" class="min-h-11 w-full rounded-lg px-3 text-sm" placeholder="手机号 / 昵称 / 签名 / 频道 / IP" />
           </label>
+        </div>
 
-          <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div class="text-sm text-steel">在线筛选</div>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <button
-                  v-for="item in statusFilters"
-                  :key="item.value"
-                  type="button"
-                  class="terminal-filter-chip"
-                  :class="{ 'terminal-filter-chip-active': statusFilter === item.value }"
-                  @click="statusFilter = item.value"
-                >
-                  {{ item.label }}
-                </button>
-              </div>
+        <div class="account-control-section">
+          <div class="account-section-title">快速筛选</div>
+          <div class="account-filter-group">
+            <span>在线</span>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="item in statusFilters"
+                :key="item.value"
+                type="button"
+                class="terminal-filter-chip"
+                :class="{ 'terminal-filter-chip-active': statusFilter === item.value }"
+                @click="statusFilter = item.value"
+              >
+                {{ item.label.replace('全部在线状态', '全部') }}
+              </button>
             </div>
+          </div>
+          <div class="account-filter-group">
+            <span>风险</span>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="item in riskFilters"
+                :key="item.value"
+                type="button"
+                class="terminal-filter-chip"
+                :class="{ 'terminal-filter-chip-active': riskFilter === item.value }"
+                @click="riskFilter = item.value"
+              >
+                {{ item.label.replace('全部风险', '全部') }}
+              </button>
+            </div>
+          </div>
+          <div class="account-filter-group">
+            <span>接入</span>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="item in accessFilters"
+                :key="item.value"
+                type="button"
+                class="terminal-filter-chip"
+                :class="{ 'terminal-filter-chip-active': accessFilter === item.value }"
+                @click="accessFilter = item.value"
+              >
+                {{ item.label.replace('全部接入', '全部') }}
+              </button>
+            </div>
+          </div>
+          <div class="account-filter-group">
+            <span>排序</span>
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="item in sortModes"
+                :key="item.value"
+                type="button"
+                class="terminal-filter-chip"
+                :class="{ 'terminal-filter-chip-active': sortMode === item.value }"
+                @click="sortMode = item.value"
+              >
+                {{ item.label }}
+              </button>
+            </div>
+          </div>
+        </div>
 
-            <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div class="text-sm text-steel">接入筛选</div>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <button
-                  v-for="item in accessFilters"
-                  :key="item.value"
-                  type="button"
-                  class="terminal-filter-chip"
-                  :class="{ 'terminal-filter-chip-active': accessFilter === item.value }"
-                  @click="accessFilter = item.value"
-                >
-                  {{ item.label }}
-                </button>
-              </div>
+        <div class="account-control-section">
+          <div class="account-section-title">当前账号池</div>
+          <div class="account-stat-grid">
+            <div v-for="card in overviewCards.slice(0, 6)" :key="card.label" class="account-stat-tile" :data-tone="card.tone">
+              <span>{{ card.label }}</span>
+              <strong>{{ card.value }}</strong>
             </div>
+          </div>
+        </div>
 
-            <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div class="text-sm text-steel">风险筛选</div>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <button
-                  v-for="item in riskFilters"
-                  :key="item.value"
-                  type="button"
-                  class="terminal-filter-chip"
-                  :class="{ 'terminal-filter-chip-active': riskFilter === item.value }"
-                  @click="riskFilter = item.value"
-                >
-                  {{ item.label }}
-                </button>
-              </div>
-            </div>
+        <div class="account-control-section">
+          <div class="account-section-title">批量处理</div>
+          <div class="grid gap-2">
+            <GlassButton size="sm" variant="secondary" :disabled="!pagedTerminals.length" @click="selectHighRiskVisible">勾选本页高风险</GlassButton>
+            <GlassButton size="sm" variant="secondary" :disabled="!pagedTerminals.length" @click="selectLowRiskVisible">勾选本页低风险</GlassButton>
+            <GlassButton size="sm" variant="ghost" :disabled="!selectedTerminalIDs.length" @click="clearTerminalSelection">清空勾选 {{ selectedTerminalIDs.length ? `(${selectedTerminalIDs.length})` : '' }}</GlassButton>
+          </div>
+          <div class="mt-3 grid gap-2">
+            <GlassButton size="sm" variant="ghost" :disabled="!selectedTerminalIDs.length" :loading="batchOperating === 'reduce_limits'" @click="runBatchOperation('reduce_limits')">批量降频 50%</GlassButton>
+            <GlassButton size="sm" variant="ghost" :disabled="!selectedTerminalIDs.length" :loading="batchOperating === 'clear_cooldown'" @click="runBatchOperation('clear_cooldown')">批量解除冷却</GlassButton>
+            <GlassButton size="sm" variant="ghost" :disabled="!selectedTerminalIDs.length" :loading="batchOperating === 'clear_expired_restrictions'" @click="runBatchOperation('clear_expired_restrictions')">批量清理过期</GlassButton>
+          </div>
+        </div>
+      </GlassCard>
 
-            <div class="rounded-2xl border border-white/10 bg-white/5 p-4">
-              <div class="text-sm text-steel">排序</div>
-              <div class="mt-3 flex flex-wrap gap-2">
-                <button
-                  v-for="item in sortModes"
-                  :key="item.value"
-                  type="button"
-                  class="terminal-filter-chip"
-                  :class="{ 'terminal-filter-chip-active': sortMode === item.value }"
-                  @click="sortMode = item.value"
-                >
-                  {{ item.label }}
-                </button>
-              </div>
-            </div>
+      <GlassCard class="account-list-panel flex min-h-[68vh] flex-col overflow-hidden">
+        <div class="account-list-heading">
+          <div>
+            <div class="text-xs uppercase tracking-[0.16em] text-steel">Account Pool</div>
+            <h2 class="mt-2 text-xl font-black">账号列表</h2>
+            <p class="mt-2 text-sm text-steel">当前分组 {{ currentGroupName }}，筛选 {{ filteredTerminals.length }} / 总数 {{ terminals.length }}，每页 {{ terminalPageSize }} 个。</p>
+          </div>
+          <div class="account-list-actions">
+            <GlassButton size="sm" variant="secondary" @click="view = view === 'table' ? 'card' : 'table'">{{ view === 'table' ? '卡片视图' : '列表视图' }}</GlassButton>
+            <GlassButton size="sm" variant="primary" :loading="checking && checkScope === 'terminal'" :disabled="!selectedTerminal" @click="check('terminal')">检测选中</GlassButton>
           </div>
         </div>
 
@@ -133,42 +167,6 @@
             <div class="terminal-check-stat">
               <span>风控档位</span>
               <strong>{{ riskPolicyPresetText }}</strong>
-            </div>
-          </div>
-        </div>
-
-        <div v-if="selectedTerminal" class="terminal-selected-card mt-5">
-          <div class="terminal-selected-main">
-            <img class="terminal-avatar-lg" :src="selectedTerminal.avatar_url || fallbackAvatar" alt="头像" @error="useFallbackAvatar" />
-            <div class="min-w-0 flex-1">
-              <div class="flex flex-wrap items-center gap-3">
-                <div class="truncate text-xl font-black">{{ selectedTerminal.nickname || displayPhone(selectedTerminal) || '未命名终端' }}</div>
-                <StatusBadge
-                  :status="accountStatus(selectedTerminal)"
-                  :label="accountStatusText(selectedTerminal)"
-                />
-              </div>
-              <div class="mt-2 text-sm text-steel">{{ displayPhone(selectedTerminal) || '未识别手机号' }}</div>
-              <div class="mt-2 line-clamp-2 text-sm text-steel">{{ selectedTerminal.bio || '未设置个性签名' }}</div>
-            </div>
-          </div>
-
-          <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <div class="terminal-detail-chip">
-              <div class="terminal-detail-label">归属地</div>
-              <div class="terminal-detail-value">{{ locationText(selectedTerminal.origin_country, selectedTerminal.origin_flag, '未知') }}</div>
-            </div>
-            <div class="terminal-detail-chip">
-              <div class="terminal-detail-label">个人频道</div>
-              <div class="terminal-detail-value">{{ selectedTerminal.channel_name || channelName(selectedTerminal.homepage) || '未设置' }}</div>
-            </div>
-            <div class="terminal-detail-chip">
-              <div class="terminal-detail-label">心跳</div>
-              <div class="terminal-detail-value">{{ onlineHeartbeat(selectedTerminal).primary }}</div>
-            </div>
-            <div class="terminal-detail-chip">
-              <div class="terminal-detail-label">绑定 IP</div>
-              <div class="terminal-detail-value">{{ networkPrimary(selectedTerminal) }}</div>
             </div>
           </div>
         </div>
@@ -444,22 +442,6 @@
       </GlassCard>
 
       <div class="flex flex-col gap-4 xl:sticky xl:top-24 xl:self-start">
-        <GlassCard tone="cyan">
-          <div class="text-xs uppercase tracking-[0.16em] text-steel">Live Stats</div>
-          <h2 class="mt-2 text-xl font-black">终端概览</h2>
-          <div class="mt-3 flex flex-wrap items-center gap-2 text-sm text-steel">
-            <span class="status-pill" :data-tone="riskPolicyTone">{{ riskPolicyPresetText }}</span>
-            <span>{{ riskPolicyHelpText }}</span>
-          </div>
-          <div class="mt-5 grid gap-3">
-            <div v-for="card in overviewCards" :key="card.label" class="metric-card app-card p-4" :data-tone="card.tone">
-              <div class="text-sm text-steel">{{ card.label }}</div>
-              <div class="mt-2 text-2xl font-black">{{ card.value }}</div>
-              <div class="mt-2 text-sm text-steel">{{ card.help }}</div>
-            </div>
-          </div>
-        </GlassCard>
-
         <GlassCard>
           <div class="flex items-start justify-between gap-3">
             <div>
