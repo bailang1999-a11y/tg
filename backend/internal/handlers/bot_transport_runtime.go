@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -52,6 +54,16 @@ func (s *Server) SetupBotWebhook(c *gin.Context) {
 		utils.Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := probeBotWebhookURL(webhookURL); err != nil {
+		now := time.Now()
+		config.WebhookURL = webhookURL
+		config.LastWebhookAt = &now
+		config.LastWebhookStatus = "failed"
+		config.LastWebhookMessage = "Webhook 连接不成功：" + err.Error()
+		_ = s.db.WithContext(c.Request.Context()).Save(&config).Error
+		utils.Fail(c, http.StatusBadRequest, config.LastWebhookMessage)
+		return
+	}
 
 	message, err := setTelegramWebhook(config.Token, webhookURL)
 	now := time.Now()
@@ -59,7 +71,7 @@ func (s *Server) SetupBotWebhook(c *gin.Context) {
 	config.Enabled = true
 	config.LastWebhookAt = &now
 	config.LastWebhookStatus = "success"
-	config.LastWebhookMessage = message
+	config.LastWebhookMessage = "Webhook 连接成功：" + message
 	if err != nil {
 		config.LastWebhookStatus = "failed"
 		config.LastWebhookMessage = err.Error()
@@ -72,7 +84,7 @@ func (s *Server) SetupBotWebhook(c *gin.Context) {
 		utils.Fail(c, http.StatusInternalServerError, "保存 Webhook 状态失败")
 		return
 	}
-	utils.OK(c, gin.H{"status": "success", "webhook_url": webhookURL, "message": message, "config": config})
+	utils.OK(c, gin.H{"status": "success", "connected": true, "webhook_url": webhookURL, "message": config.LastWebhookMessage, "config": config})
 }
 
 func validateBotWebhookURL(webhookURL string) error {
@@ -82,6 +94,25 @@ func validateBotWebhookURL(webhookURL string) error {
 	}
 	if parsed.Scheme != "https" {
 		return fmt.Errorf("Telegram Webhook 必须使用 HTTPS 公网地址；当前地址是 %s。没有 HTTPS 域名时，请使用本地轮询模式", parsed.Scheme)
+	}
+	return nil
+}
+
+func probeBotWebhookURL(webhookURL string) error {
+	body, _ := json.Marshal(gin.H{})
+	req, err := http.NewRequest(http.MethodPost, webhookURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("请求地址无效")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("无法访问回调地址：%s", err.Error())
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("回调地址返回 HTTP %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -101,7 +132,58 @@ func (s *Server) GetBotWebhookStatus(c *gin.Context) {
 		utils.Fail(c, http.StatusBadRequest, "读取 Webhook 状态失败："+err.Error())
 		return
 	}
-	utils.OK(c, info)
+	status := botWebhookConnectionStatus(config, info)
+	if statusURL, _ := status["webhook_url"].(string); strings.TrimSpace(statusURL) != "" {
+		if err := probeBotWebhookURL(statusURL); err != nil {
+			status["connected"] = false
+			status["status"] = "failed"
+			status["message"] = "Webhook 连接不成功：" + err.Error()
+		}
+	}
+	status["telegram"] = info
+	utils.OK(c, status)
+}
+
+func botWebhookConnectionStatus(config models.BotConfig, info map[string]any) gin.H {
+	result, _ := info["result"].(map[string]any)
+	telegramURL, _ := result["url"].(string)
+	webhookURL := firstNonEmpty(strings.TrimSpace(telegramURL), strings.TrimSpace(config.WebhookURL))
+	pendingCount, _ := result["pending_update_count"].(float64)
+	lastError, _ := result["last_error_message"].(string)
+	if webhookURL == "" {
+		return gin.H{
+			"connected":            false,
+			"status":               "not_configured",
+			"message":              "Webhook 未配置",
+			"webhook_url":          "",
+			"pending_update_count": int(pendingCount),
+		}
+	}
+	if strings.TrimSpace(lastError) != "" {
+		return gin.H{
+			"connected":            false,
+			"status":               "failed",
+			"message":              "Webhook 连接不成功：" + lastError,
+			"webhook_url":          webhookURL,
+			"pending_update_count": int(pendingCount),
+		}
+	}
+	if strings.TrimSpace(config.WebhookURL) != "" && strings.TrimSpace(telegramURL) != "" && strings.TrimSpace(config.WebhookURL) != strings.TrimSpace(telegramURL) {
+		return gin.H{
+			"connected":            false,
+			"status":               "mismatch",
+			"message":              "Webhook 连接不成功：Telegram 当前地址与后台保存地址不一致",
+			"webhook_url":          webhookURL,
+			"pending_update_count": int(pendingCount),
+		}
+	}
+	return gin.H{
+		"connected":            true,
+		"status":               "success",
+		"message":              "Webhook 连接成功",
+		"webhook_url":          webhookURL,
+		"pending_update_count": int(pendingCount),
+	}
 }
 
 func (s *Server) ClearBotWebhook(c *gin.Context) {

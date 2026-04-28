@@ -51,9 +51,9 @@ export const botApi = {
   stopBotPush: () => request<{ status: string; config: BotConfig }>('/api/v1/bot/stop', { method: 'POST', body: JSON.stringify({}) }),
   syncBotCommands: () => request<{ status: string; commands: Array<{ command: string; description: string }> }>('/api/v1/bot/commands/sync', { method: 'POST', body: JSON.stringify({}) }),
   setupBotWebhook: (webhookUrl: string) =>
-    request<{ status: string; webhook_url: string; message: string; config: BotConfig }>('/api/v1/bot/webhook/setup', { method: 'POST', body: JSON.stringify({ webhook_url: webhookUrl }) }),
+    request<{ status: string; connected: boolean; webhook_url: string; message: string; config: BotConfig }>('/api/v1/bot/webhook/setup', { method: 'POST', body: JSON.stringify({ webhook_url: webhookUrl }) }),
   clearBotWebhook: () => request<{ status: string; message: string; config: BotConfig }>('/api/v1/bot/webhook/clear', { method: 'POST', body: JSON.stringify({}) }),
-  botWebhookStatus: () => request<Record<string, unknown>>('/api/v1/bot/webhook/status'),
+  botWebhookStatus: () => request<{ connected: boolean; status: string; message: string; webhook_url: string; pending_update_count: number; telegram?: Record<string, unknown> }>('/api/v1/bot/webhook/status'),
   botPollingStatus: () => request<BotPollingStatus>('/api/v1/bot/polling'),
   startBotPolling: () => request<{ status: string; started_at: string }>('/api/v1/bot/polling/start', { method: 'POST', body: JSON.stringify({}) }),
   stopBotPolling: () => request<{ status: string }>('/api/v1/bot/polling/stop', { method: 'POST', body: JSON.stringify({}) }),
@@ -69,4 +69,3 @@ export const botApi = {
   updateBotUser: (id: string, payload: Record<string, unknown>) =>
     request<{ id: string }>(`/api/v1/bot-users/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
 }
-

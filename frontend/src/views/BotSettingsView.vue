@@ -113,16 +113,16 @@
               </div>
             </div>
             <label class="block-field compact-field">
-              <span>公网地址或完整 Webhook 地址</span>
-              <input v-model="form.webhook_url" placeholder="https://你的域名/api/v1/bot/webhook/密钥" />
+              <span>已解析的 HTTPS 域名</span>
+              <input v-model="form.webhook_url" placeholder="https://tg.huazhaikeji.cc" />
             </label>
             <div class="bot-actions compact-actions">
-              <GlassButton variant="primary" :loading="webhookBusy" @click="setupWebhook">设置 Webhook</GlassButton>
-              <GlassButton variant="secondary" :loading="webhookBusy" @click="checkWebhook">查看状态</GlassButton>
+              <GlassButton variant="primary" :loading="webhookBusy" @click="setupWebhook">保存并检查</GlassButton>
+              <GlassButton variant="secondary" :loading="webhookBusy" @click="checkWebhook">检查连接</GlassButton>
               <GlassButton variant="danger" :loading="webhookBusy" @click="clearWebhook">一键关闭</GlassButton>
             </div>
             <div class="test-result compact-result">
-              <strong>{{ config.webhook_url || '尚未设置 Webhook' }}</strong>
+              <strong>{{ webhookConnectionTitle }}</strong>
               <span>{{ webhookStatusText || config.last_webhook_message || '没有公网时，可使用右侧本地轮询测试。' }}</span>
             </div>
           </section>
@@ -530,6 +530,12 @@ const form = reactive({
   menu_placeholder: '选择功能或输入命令...',
   webhook_url: ''
 })
+const webhookConnectionTitle = computed(() => {
+  if (!config.value.webhook_url) return '尚未设置 Webhook'
+  if (config.value.last_webhook_status === 'success') return '连接成功'
+  if (config.value.last_webhook_status === 'failed') return '连接不成功'
+  return config.value.webhook_url
+})
 const keywordsText = ref('')
 const trialDurationValue = ref(5)
 const trialDurationUnit = ref<'hour' | 'day'>('hour')
@@ -869,7 +875,7 @@ async function setupWebhook() {
     const result = await api.setupBotWebhook(form.webhook_url)
     applyConfig(result.config)
     webhookStatusText.value = result.message
-    ui.toast({ title: 'Webhook 已设置', message: result.webhook_url, tone: 'success' })
+    ui.toast({ title: result.connected ? 'Webhook 连接成功' : 'Webhook 连接不成功', message: result.message, tone: result.connected ? 'success' : 'error' })
   } catch (err) {
     ui.toast({ title: 'Webhook 设置失败', message: err instanceof Error ? err.message : '错误', tone: 'error' })
   } finally {
@@ -881,11 +887,13 @@ async function checkWebhook() {
   webhookBusy.value = true
   try {
     const info = await api.botWebhookStatus()
-    const result = info.result as Record<string, unknown> | undefined
-    webhookStatusText.value = result
-      ? `当前地址：${String(result.url || '未设置')}；待处理：${String(result.pending_update_count ?? 0)}`
-      : JSON.stringify(info)
-    ui.toast({ title: 'Webhook 状态已读取', message: webhookStatusText.value, tone: 'success' })
+    webhookStatusText.value = `${info.message}；待处理：${info.pending_update_count ?? 0}`
+    if (info.webhook_url) {
+      config.value.webhook_url = info.webhook_url
+    }
+    config.value.last_webhook_status = info.connected ? 'success' : 'failed'
+    config.value.last_webhook_message = info.message
+    ui.toast({ title: info.connected ? 'Webhook 连接成功' : 'Webhook 连接不成功', message: webhookStatusText.value, tone: info.connected ? 'success' : 'error' })
   } catch (err) {
     ui.toast({ title: '读取失败', message: err instanceof Error ? err.message : '错误', tone: 'error' })
   } finally {

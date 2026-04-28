@@ -351,6 +351,9 @@ func telegramBotHTTPClient(timeout time.Duration) *http.Client {
 
 func normalizeBotWebhookURL(value string, secret string) string {
 	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	if value != "" && !strings.Contains(value, "://") {
+		value = "https://" + value
+	}
 	if strings.Contains(value, "/api/v1/bot/webhook/") {
 		return value
 	}
