@@ -300,6 +300,7 @@ function actionText(log: TaskLog) {
     join_success: '加入目标成功',
     join_failed: '加入目标失败',
     join_skipped: '加入目标跳过',
+    quota_wait: '等待账号可用',
     adapter: '执行适配器状态',
     script: '脚本检查',
     terminal_path: '会话路径检查',

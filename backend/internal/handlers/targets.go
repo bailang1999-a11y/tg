@@ -743,6 +743,7 @@ func (s *Server) runJoinTargetsTask(ctx context.Context, task models.Task, termi
 	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始自动加群：%d 个候选终端，%d 个目标，按未覆盖目标优先调度", len(terminals), len(targets)), "", "")
 
 	done := 0
+targetLoop:
 	for _, target := range targets {
 		done++
 		targetRef := targetJoinLabel(target)
@@ -760,16 +761,41 @@ func (s *Server) runJoinTargetsTask(ctx context.Context, task models.Task, termi
 			s.updateJoinTaskProgress(ctx, task.ID, done, total)
 			continue
 		}
-		terminalIndex, terminal, quotaErr := s.pickJoinTargetTerminal(ctx, task.TenantID, terminals, target)
-		if quotaErr != nil {
-			row.Status = "skipped"
-			row.Reason = quotaErr.Error()
-			summary.Skipped++
-			accumulateSkipReason(summary.SkipReasons, row.Reason)
-			summary.Items = append(summary.Items, row)
-			_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
-			s.updateJoinTaskProgress(ctx, task.ID, done, total)
-			continue
+		var terminalIndex int
+		var terminal models.Terminal
+		for {
+			var quotaErr error
+			terminalIndex, terminal, quotaErr = s.pickJoinTargetTerminal(ctx, task.TenantID, terminals, target)
+			if quotaErr == nil {
+				break
+			}
+			waitUntil, waitReason := s.nextJoinTargetTerminalRetryAt(ctx, task.TenantID, terminals, target)
+			if waitUntil == nil || !waitUntil.After(time.Now()) {
+				row.Status = "skipped"
+				row.Reason = quotaErr.Error()
+				summary.Skipped++
+				accumulateSkipReason(summary.SkipReasons, row.Reason)
+				summary.Items = append(summary.Items, row)
+				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
+				s.updateJoinTaskProgress(ctx, task.ID, done, total)
+				continue targetLoop
+			}
+			detail := fmt.Sprintf("%s：%s，继续目标 %s", waitReason, waitUntil.Local().Format("2006-01-02 15:04:05"), targetRef)
+			_ = s.createTaskLog(ctx, task, "INFO", "quota_wait", detail, "", targetRef)
+			timer := time.NewTimer(time.Until(*waitUntil))
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				row.Status = "skipped"
+				row.Reason = "任务等待账号冷却时超时或被取消"
+				summary.Skipped++
+				accumulateSkipReason(summary.SkipReasons, row.Reason)
+				summary.Items = append(summary.Items, row)
+				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
+				s.updateJoinTaskProgress(ctx, task.ID, done, total)
+				continue targetLoop
+			case <-timer.C:
+			}
 		}
 		terminalRef := terminalTargetImportLabel(terminal)
 		row.TerminalID = terminal.ID.String()
@@ -939,6 +965,58 @@ func (s *Server) pickJoinTargetTerminal(ctx context.Context, tenantID uuid.UUID,
 		skipReasons = append(skipReasons, err.Error())
 	}
 	return -1, models.Terminal{}, fmt.Errorf("全部加群账号已跳过：%s", summarizeTerminalSkipReasons(skipReasons, "账号限额已满或不可用"))
+}
+
+func (s *Server) nextJoinTargetTerminalRetryAt(ctx context.Context, tenantID uuid.UUID, terminals []models.Terminal, target models.Target) (*time.Time, string) {
+	now := time.Now()
+	settings := s.readSystemSettings(ctx, tenantID)
+	var earliest *time.Time
+	for _, terminal := range terminals {
+		if !terminalReadyForOutboundAction(terminal) || !s.terminalTargetAvailable(ctx, tenantID, terminal.ID, terminalQuotaActionJoin, target.Type, target.Identifier) {
+			continue
+		}
+		blockedUntil := joinTerminalBlockedUntil(now, terminal, settings.RiskControl)
+		if blockedUntil == nil {
+			return nil, ""
+		}
+		if earliest == nil || blockedUntil.Before(*earliest) {
+			value := *blockedUntil
+			earliest = &value
+		}
+	}
+	if earliest == nil {
+		return nil, ""
+	}
+	return earliest, "可用加群账号均在冷却或限额窗口中，任务将等待下一次可用时间"
+}
+
+func joinTerminalBlockedUntil(now time.Time, terminal models.Terminal, settings systemRiskControlSettings) *time.Time {
+	var blockedUntil *time.Time
+	pushBlockedUntil := func(value *time.Time) {
+		if value == nil || !value.After(now) {
+			return
+		}
+		if blockedUntil == nil || value.After(*blockedUntil) {
+			next := *value
+			blockedUntil = &next
+		}
+	}
+	pushBlockedUntil(terminal.SleepUntil)
+	pushBlockedUntil(terminal.JoinCooldownUntil)
+
+	hourlyCount, hourlyResetAt := resetTerminalQuotaWindow(now, terminal.JoinHourlyCount, terminal.JoinHourlyResetAt, "hour")
+	if terminal.JoinHourlyLimit > 0 && hourlyCount >= terminal.JoinHourlyLimit {
+		pushBlockedUntil(hourlyResetAt)
+	}
+	dailyLimit := terminal.JoinDailyLimit
+	if dailyLimit <= 0 {
+		dailyLimit = settings.JoinDailyLimit
+	}
+	dailyCount, dailyResetAt := resetTerminalQuotaWindow(now, terminal.JoinDailyCount, terminal.JoinDailyResetAt, "day")
+	if dailyLimit > 0 && dailyCount >= dailyLimit {
+		pushBlockedUntil(dailyResetAt)
+	}
+	return blockedUntil
 }
 
 func terminalOlderForJoin(candidate models.Terminal, current models.Terminal) bool {
