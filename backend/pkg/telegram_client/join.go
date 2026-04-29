@@ -80,11 +80,17 @@ func (j Joiner) Join(ctx context.Context, req JoinRequest) (JoinResult, error) {
 		result.Reason = "读取终端文件路径失败"
 		return result, fmt.Errorf("%s: %w", result.Reason, err)
 	}
+	executionFilePath, cleanup, err := PrepareSessionExecutionPath(absFilePath, req.AccessType)
+	if err != nil {
+		result.Reason = err.Error()
+		return result, err
+	}
+	defer cleanup()
 
 	args := []string{
 		j.scriptPath,
-		"--file", absFilePath,
-		"--access-type", req.AccessType,
+		"--file", executionFilePath,
+		"--access-type", NormalizeTelegramAccessType(req.AccessType),
 		"--target-type", req.TargetType,
 		"--target", req.Identifier,
 	}
