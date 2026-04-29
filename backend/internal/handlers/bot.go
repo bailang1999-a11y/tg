@@ -56,6 +56,16 @@ func (s *Server) UpdateBotConfig(c *gin.Context) {
 	buttonLabels := normalizeBotButtonLabels(input.ButtonLabels)
 	replyTemplates := normalizeBotReplyTemplates(input.ReplyTemplates)
 	defaultDMMessages := normalizeBotDMMessages(input.DefaultDMMessages)
+	forceJoinURL := strings.TrimSpace(input.ForceJoinURL)
+	if forceJoinURL == "" {
+		utils.Fail(c, http.StatusBadRequest, "请填写强制加入的公开群或频道链接")
+		return
+	}
+	forceJoinHandle := normalizeTelegramPublicHandle(forceJoinURL)
+	if forceJoinHandle == "" {
+		utils.Fail(c, http.StatusBadRequest, "强制加入链接无效，请填写 https://t.me/xxx 或 @xxx")
+		return
+	}
 	buttonLabelsJSON, _ := json.Marshal(buttonLabels)
 	replyTemplatesJSON, _ := json.Marshal(replyTemplates)
 	defaultDMMessagesJSON, _ := json.Marshal(defaultDMMessages)
@@ -74,9 +84,9 @@ func (s *Server) UpdateBotConfig(c *gin.Context) {
 	config.AdminChatID = strings.TrimSpace(input.AdminChatID)
 	config.AdminContact = strings.TrimSpace(input.AdminContact)
 	config.Enabled = input.Enabled
-	config.ForceJoinEnabled = input.ForceJoinEnabled
-	config.ForceJoinURL = strings.TrimSpace(input.ForceJoinURL)
-	config.ForceJoinHandle = normalizeTelegramPublicHandle(input.ForceJoinURL)
+	config.ForceJoinEnabled = true
+	config.ForceJoinURL = forceJoinURL
+	config.ForceJoinHandle = forceJoinHandle
 	config.TrialEnabled = input.TrialEnabled
 	config.TrialHours = trialHours
 	config.TrialFeatures = datatypes.JSON(featuresJSON)

@@ -196,12 +196,12 @@
             </div>
 
             <div class="force-join-box">
-              <label>
-                <input v-model="form.force_join_enabled" type="checkbox" />
-                <span>强制加入公开群/频道后才能试用和设置关键词</span>
+              <label class="force-join-required">
+                <input checked disabled type="checkbox" />
+                <span>已强制启用：用户必须加入公开群/频道后才能使用机器人</span>
               </label>
               <input v-model="form.force_join_url" placeholder="https://t.me/your_channel 或 @your_channel" />
-              <small>公开链接会自动解析；Bot 需要在该群/频道中，建议设置为管理员。</small>
+              <small>该规则不可关闭。公开链接会自动解析；Bot 需要在该群/频道中，建议设置为管理员。</small>
             </div>
           </div>
 
@@ -633,7 +633,7 @@ const overviewCards = computed(() => [
     icon: '✦',
     label: '试用策略',
     value: form.trial_enabled ? `${trialHoursFromVisual()} 小时` : '已关闭',
-    help: form.force_join_enabled ? '需先加入公开群/频道' : '无需强制加群',
+    help: '需先加入公开群/频道',
     tone: form.trial_enabled ? 'success' : 'muted'
   }
 ])
@@ -651,8 +651,8 @@ const policyExecutionItems = computed(() => [
   },
   {
     label: '强制加群',
-    ok: !form.force_join_enabled || Boolean(form.force_join_url.trim()),
-    detail: form.force_join_enabled ? '试用、设置关键词前会先校验公开群/频道成员关系' : '当前未启用强制加群'
+    ok: Boolean(form.force_join_url.trim()),
+    detail: '所有 Bot 功能使用前都会先校验公开群/频道成员关系'
   },
   {
     label: '命令开关',
@@ -737,7 +737,7 @@ function applyConfig(next: BotConfig) {
   form.admin_chat_id = next.admin_chat_id || ''
   form.admin_contact = next.admin_contact || ''
   form.enabled = Boolean(next.enabled)
-  form.force_join_enabled = Boolean(next.force_join_enabled)
+  form.force_join_enabled = true
   form.force_join_url = next.force_join_url || ''
   form.trial_enabled = true
   form.trial_hours = next.trial_hours || 5
@@ -815,8 +815,14 @@ async function saveConfig() {
     form.trial_hours = trialHoursFromVisual()
     form.trial_enabled = true
     form.trial_features = ['keyword_monitor']
+    form.force_join_enabled = true
+    if (!form.force_join_url.trim()) {
+      ui.toast({ title: '请填写公开群/频道', message: '机器人已改为强制加群后才能使用，必须配置公开群或频道链接。', tone: 'warning' })
+      return
+    }
     const updated = await api.updateBotConfig({
       ...form,
+      force_join_enabled: true,
       enabled_commands: commandKeysForSave(),
       default_keywords: keywordList(),
       button_labels: buttonLabelPayload(),

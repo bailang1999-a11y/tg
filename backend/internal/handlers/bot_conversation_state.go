@@ -34,7 +34,7 @@ func normalizeTelegramPublicHandle(value string) string {
 }
 
 func (s *Server) sendForceJoinPromptIfNeeded(ctx context.Context, config models.BotConfig, subscriber models.BotSubscriber, chatID string) (bool, error) {
-	if !config.ForceJoinEnabled {
+	if !botForceJoinRequired(config) {
 		return false, nil
 	}
 	joined, err := s.botSubscriberJoinedRequiredChat(ctx, config, subscriber)
@@ -46,6 +46,10 @@ func (s *Server) sendForceJoinPromptIfNeeded(ctx context.Context, config models.
 		return false, nil
 	}
 	return true, sendTelegramBotMessageWithMarkup(config.Token, chatID, forceJoinPromptText(config), forceJoinInlineKeyboard(config))
+}
+
+func botForceJoinRequired(config models.BotConfig) bool {
+	return config.ForceJoinEnabled || strings.TrimSpace(config.ForceJoinHandle) != "" || strings.TrimSpace(config.ForceJoinURL) != ""
 }
 
 func forceJoinPromptText(config models.BotConfig) string {

@@ -208,8 +208,8 @@ func (s *Server) handleBotCallback(ctx context.Context, config models.BotConfig,
 		return sendTelegramBotMessageWithMarkup(config.Token, chatID, botSettingsPanelText(subscriber), s.botSettingsMarkup(ctx, config, subscriber))
 	case data == "cfg:refresh":
 		subscriber = s.reloadBotSubscriber(ctx, subscriber)
-		joined := "未开启强制加群"
-		if config.ForceJoinEnabled {
+		joined := "未配置强制加群链接"
+		if botForceJoinRequired(config) {
 			ok, _ := s.botSubscriberJoinedRequiredChat(ctx, config, subscriber)
 			if ok {
 				joined = "已加入指定群/频道"
