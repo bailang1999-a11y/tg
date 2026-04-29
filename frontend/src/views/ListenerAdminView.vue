@@ -1116,6 +1116,7 @@ async function createListenerJoinTask() {
     })
   } catch (err) {
     error.value = err instanceof Error ? err.message : '启动自动加群失败'
+  } finally {
     joiningTargets.value = false
   }
 }
@@ -1202,7 +1203,6 @@ function trackAccountTask(task: Task) {
 
 function trackJoinTask(task: Task) {
   activeJoinTask.value = task
-  joiningTargets.value = true
   if (joinTaskTimer) window.clearInterval(joinTaskTimer)
   joinTaskTimer = window.setInterval(pollJoinTask, 2500)
 }
