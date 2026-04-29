@@ -539,7 +539,37 @@ function isSkippedLog(log: TaskLog) {
 
 function normalizeIssueReason(value: unknown) {
   const reason = String(value || '').trim()
-  return reason || '未返回具体原因'
+  if (!reason) return '未返回具体原因'
+  return translateIssueReason(reason)
+}
+
+function translateIssueReason(reason: string) {
+  const usernameMissing = reason.match(/^No user has "([^"]+)" as username$/i)
+  if (usernameMissing) return `Telegram 未找到用户名「${usernameMissing[1]}」，请检查目标群链接是否失效或拼写错误`
+
+  const translations: Array<[RegExp, string]> = [
+    [/^The username is not occupied by anyone$/i, 'Telegram 未找到这个用户名，请检查目标群链接是否失效或拼写错误'],
+    [/^Nobody is using this username$/i, 'Telegram 未找到这个用户名，请检查目标群链接是否失效或拼写错误'],
+    [/^Username not found$/i, 'Telegram 未找到这个用户名，请检查目标群链接是否失效或拼写错误'],
+    [/^The invite link is expired or has been revoked$/i, '邀请链接已过期或已被撤销'],
+    [/^Invite hash expired$/i, '邀请链接已过期'],
+    [/^Invite hash invalid$/i, '邀请链接无效'],
+    [/^A wait of (\d+) seconds is required/i, 'Telegram 限流中，需要等待后再继续'],
+    [/^You have joined too many channels\/supergroups$/i, '该账号加入的群组过多，Telegram 已限制继续加群'],
+    [/^The user is already a participant/i, '账号已经在这个群里'],
+    [/^User already participant/i, '账号已经在这个群里'],
+    [/^The channel specified is private/i, '目标群是私密群，当前账号无法直接加入'],
+    [/^Cannot find any entity corresponding to/i, '无法识别目标群，请检查链接或用户名是否正确'],
+    [/^Could not find the input entity/i, '无法读取目标群信息，请检查链接或账号权限'],
+    [/^AUTH_KEY_UNREGISTERED/i, '账号登录状态失效，需要重新导入或重新登录'],
+    [/^SESSION_REVOKED/i, '账号会话已失效，需要重新导入'],
+    [/^USER_DEACTIVATED/i, '账号已被 Telegram 停用'],
+    [/^PHONE_NUMBER_BANNED/i, '手机号已被 Telegram 封禁'],
+    [/^connection timed out/i, '连接 Telegram 超时，请检查代理或网络'],
+    [/^proxy/i, '代理连接失败，请检查该账号绑定的代理']
+  ]
+  const found = translations.find(([pattern]) => pattern.test(reason))
+  return found ? found[1] : reason
 }
 
 function numberFromUnknown(value: unknown) {
