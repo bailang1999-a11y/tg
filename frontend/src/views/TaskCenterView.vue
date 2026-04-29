@@ -237,15 +237,22 @@ const taskTypeOptions = [
   { value: 'scrm_listener', label: '监听任务' },
   { value: 'bot_dm', label: 'Bot 私信任务' },
   { value: 'join_targets', label: '终端加入目标池' },
+  { value: 'listener_join_targets', label: '监听号自动加群' },
   { value: 'listener_proxy_check', label: '监听代理检测' },
   { value: 'target_membership_refresh', label: '目标群状态刷新' }
 ]
+const activeTaskStatuses = ['running', 'active', 'queued', 'pending', 'retrying']
 
 async function load() {
   loading.value = true
   try {
     filters.status = ''
-    tasks.value = (await api.tasks({ ...filters, limit: 500 })).filter(isRunningTask)
+    const results = await Promise.all(
+      activeTaskStatuses.map((status) => api.tasks({ ...filters, status, limit: 500 }))
+    )
+    tasks.value = dedupeTasks(results.flat())
+      .filter(isRunningTask)
+      .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())
     selectedTask.value = tasks.value.find((task) => task.id === selectedTask.value?.id) || tasks.value[0] || null
     selectedTaskIDs.value = selectedTaskIDs.value.filter((id) => tasks.value.some((task) => task.id === id && isRunningTask(task)))
   } catch (err) {
@@ -376,6 +383,10 @@ function statusTone(status: string) {
 
 function isRunningTask(task: Task) {
   return ['running', 'active', 'queued', 'pending', 'retrying'].includes(normalizeKeyword(task.status))
+}
+
+function dedupeTasks(items: Task[]) {
+  return Array.from(new Map(items.map((task) => [task.id, task])).values())
 }
 
 function settingText(item: { label: string; value: string }) {
