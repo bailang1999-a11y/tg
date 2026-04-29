@@ -983,7 +983,7 @@ func saveUploadedBytes(tenantID uuid.UUID, category, name string, data []byte) (
 	hash := sha256.Sum256(data)
 	filename := fmt.Sprintf("%d-%s-%s", time.Now().UnixNano(), hex.EncodeToString(hash[:8]), sanitizeFilename(filepath.Base(name)))
 	path := filepath.Join(base, filename)
-	return path, os.WriteFile(path, data, 0o600)
+	return path, os.WriteFile(path, data, 0o644)
 }
 
 var phoneRegex = regexp.MustCompile(`\d{5,}`)
