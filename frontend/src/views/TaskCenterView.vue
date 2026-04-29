@@ -150,6 +150,44 @@
             </div>
           </div>
 
+          <div v-if="selectedIssueSummary.total > 0" class="detail-section">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <h3>失败 / 跳过明细</h3>
+              <span class="text-xs text-steel">失败 {{ selectedIssueSummary.failed }} · 跳过 {{ selectedIssueSummary.skipped }}</span>
+            </div>
+
+            <div v-if="issueReasonGroups.length" class="mb-3 space-y-2">
+              <div v-for="group in issueReasonGroups" :key="`${group.status}-${group.reason}`" class="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="status-pill" :data-tone="group.status === 'failed' ? 'danger' : 'warning'">{{ group.status === 'failed' ? '失败' : '跳过' }}</span>
+                  <strong class="text-sm text-white">{{ group.count }} 次</strong>
+                </div>
+                <p class="mt-2 text-sm text-steel">{{ group.reason }}</p>
+              </div>
+            </div>
+
+            <div class="max-h-[260px] overflow-auto rounded-xl border border-white/10">
+              <div
+                v-for="item in issueDetailRows"
+                :key="item.id"
+                class="grid gap-2 border-b border-white/8 px-3 py-3 text-sm last:border-b-0"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="status-pill" :data-tone="item.status === 'failed' ? 'danger' : 'warning'">{{ item.statusText }}</span>
+                  <span class="text-xs text-steel">{{ formatTime(item.createdAt) }}</span>
+                </div>
+                <div class="grid gap-1 text-xs text-steel">
+                  <span v-if="item.account">账号：{{ item.account }}</span>
+                  <span v-if="item.target">目标：{{ item.target }}</span>
+                  <span>原因：{{ item.reason }}</span>
+                </div>
+              </div>
+              <div v-if="!issueDetailRows.length" class="px-3 py-4 text-center text-sm text-steel">
+                暂未读取到失败或跳过日志，任务继续运行后会自动显示。
+              </div>
+            </div>
+          </div>
+
           <div class="detail-section">
             <h3>原始设置</h3>
             <pre>{{ prettyJSON(selectedTask.payload) }}</pre>
@@ -168,13 +206,14 @@ import GlassCard from '../components/GlassCard.vue'
 import FilterCard from '../components/FilterCard.vue'
 import PageToolbar from '../components/PageToolbar.vue'
 import TableCard from '../components/TableCard.vue'
-import { api, type BotUserDashboardItem, type SystemSettings, type Task, type User } from '../api/client'
+import { api, type BotUserDashboardItem, type SystemSettings, type Task, type TaskLog, type User } from '../api/client'
 import { useUiStore } from '../stores/ui'
 import { taskDisplayName, taskStatusDisplay, taskTypeDisplay } from '../utils/taskDisplay'
 
 const ui = useUiStore()
 const tasks = ref<Task[]>([])
 const selectedTask = ref<Task | null>(null)
+const selectedTaskLogs = ref<TaskLog[]>([])
 const webUsers = ref<User[]>([])
 const botUsers = ref<BotUserDashboardItem[]>([])
 const systemSettings = ref<SystemSettings | null>(null)
@@ -227,6 +266,34 @@ const riskPolicyTone = computed(() => {
   if (riskPolicyPresetText.value.includes('激进')) return 'success'
   return 'cyan'
 })
+const issueDetailRows = computed(() => buildIssueRows(selectedTask.value, selectedTaskLogs.value))
+const selectedIssueSummary = computed(() => {
+  const fromRows = issueDetailRows.value.reduce(
+    (acc, row) => {
+      if (row.status === 'failed') acc.failed += 1
+      if (row.status === 'skipped') acc.skipped += 1
+      return acc
+    },
+    { failed: 0, skipped: 0 }
+  )
+  const summary = selectedTask.value?.summary || {}
+  const failed = numberFromUnknown(summary.failed) || fromRows.failed
+  const skipped = numberFromUnknown(summary.skipped) || fromRows.skipped
+  return { failed, skipped, total: failed + skipped }
+})
+const issueReasonGroups = computed(() => {
+  const counts = new Map<string, { status: 'failed' | 'skipped'; reason: string; count: number }>()
+  issueDetailRows.value.forEach((row) => {
+    const key = `${row.status}:${row.reason}`
+    const existing = counts.get(key)
+    if (existing) {
+      existing.count += 1
+      return
+    }
+    counts.set(key, { status: row.status, reason: row.reason, count: 1 })
+  })
+  return Array.from(counts.values()).sort((left, right) => right.count - left.count)
+})
 
 const taskTypeOptions = [
   { value: 'import', label: '导入任务' },
@@ -254,6 +321,7 @@ async function load() {
       .filter(isRunningTask)
       .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())
     selectedTask.value = tasks.value.find((task) => task.id === selectedTask.value?.id) || tasks.value[0] || null
+    await loadSelectedTaskLogs()
     selectedTaskIDs.value = selectedTaskIDs.value.filter((id) => tasks.value.some((task) => task.id === id && isRunningTask(task)))
   } catch (err) {
     ui.toast({ title: '任务加载失败', message: err instanceof Error ? err.message : '请求失败', tone: 'error' })
@@ -297,6 +365,20 @@ async function action(id: string, next: string) {
 function selectTask(task: Task) {
   if (!isRunningTask(task)) return
   selectedTask.value = task
+  void loadSelectedTaskLogs()
+}
+
+async function loadSelectedTaskLogs() {
+  const task = selectedTask.value
+  if (!task) {
+    selectedTaskLogs.value = []
+    return
+  }
+  try {
+    selectedTaskLogs.value = await api.taskLogs(task.id, { limit: 1000 })
+  } catch {
+    selectedTaskLogs.value = []
+  }
 }
 
 function toggleTaskSelection(id: string) {
@@ -409,6 +491,60 @@ function taskReason(task: Task) {
 function prettyJSON(value: unknown) {
   if (!value || (typeof value === 'object' && !Object.keys(value as Record<string, unknown>).length)) return '无'
   return JSON.stringify(value, null, 2)
+}
+
+type IssueRow = {
+  id: string
+  status: 'failed' | 'skipped'
+  statusText: string
+  account: string
+  target: string
+  reason: string
+  createdAt: string
+}
+
+function buildIssueRows(task: Task | null, logs: TaskLog[]): IssueRow[] {
+  if (!task) return []
+  const rows = logs
+    .filter((log) => log.task_id === task.id)
+    .filter((log) => isIssueLog(log))
+    .map((log) => {
+      const status: IssueRow['status'] = isSkippedLog(log) ? 'skipped' : 'failed'
+      return {
+        id: log.id,
+        status,
+        statusText: status === 'failed' ? '失败' : '跳过',
+        account: log.terminal_ref || '',
+        target: log.target_ref || '',
+        reason: normalizeIssueReason(log.details),
+        createdAt: log.created_at
+      }
+    })
+  return rows.reverse()
+}
+
+function isIssueLog(log: TaskLog) {
+  return isFailedLog(log) || isSkippedLog(log)
+}
+
+function isFailedLog(log: TaskLog) {
+  const action = normalizeKeyword(log.action)
+  return log.level === 'ERROR' || action.includes('failed') || action.includes('fail')
+}
+
+function isSkippedLog(log: TaskLog) {
+  const action = normalizeKeyword(log.action)
+  return log.level === 'WARN' || action.includes('skipped') || action.includes('skip')
+}
+
+function normalizeIssueReason(value: unknown) {
+  const reason = String(value || '').trim()
+  return reason || '未返回具体原因'
+}
+
+function numberFromUnknown(value: unknown) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
 }
 
 function normalizeKeyword(value: unknown) {
