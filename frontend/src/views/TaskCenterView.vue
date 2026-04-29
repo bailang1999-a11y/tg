@@ -529,12 +529,12 @@ function isIssueLog(log: TaskLog) {
 
 function isFailedLog(log: TaskLog) {
   const action = normalizeKeyword(log.action)
-  return log.level === 'ERROR' || action.includes('failed') || action.includes('fail')
+  return action.includes('failed') || action.includes('fail') || (log.level === 'ERROR' && action !== 'summary')
 }
 
 function isSkippedLog(log: TaskLog) {
   const action = normalizeKeyword(log.action)
-  return log.level === 'WARN' || action.includes('skipped') || action.includes('skip')
+  return action.includes('skipped') || action.includes('skip')
 }
 
 function normalizeIssueReason(value: unknown) {
