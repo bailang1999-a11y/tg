@@ -91,18 +91,20 @@ func SubscribeWithOptions(client *appnats.Client, options SubscribeOptions, hand
 		"tenant.*.task.*",
 		WorkerQueue,
 		func(msg *nats.Msg) {
-			var taskMsg TaskMessage
-			if err := json.Unmarshal(msg.Data, &taskMsg); err != nil {
-				_ = msg.Term()
-				return
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
-			defer cancel()
-			if err := handler(ctx, taskMsg); err != nil {
-				_ = msg.Nak()
-				return
-			}
-			_ = msg.Ack()
+			go func() {
+				var taskMsg TaskMessage
+				if err := json.Unmarshal(msg.Data, &taskMsg); err != nil {
+					_ = msg.Term()
+					return
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
+				defer cancel()
+				if err := handler(ctx, taskMsg); err != nil {
+					_ = msg.Nak()
+					return
+				}
+				_ = msg.Ack()
+			}()
 		},
 		nats.Durable(DurableName),
 		nats.ManualAck(),

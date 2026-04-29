@@ -290,23 +290,35 @@ targetLoop:
 			s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
 			_ = s.createTaskLog(ctx, task, "INFO", "quota_wait", detail, "", targetRef)
 			timer := time.NewTimer(time.Until(*waitUntil))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				row.Status = "skipped"
-				row.Reason = "任务等待监听号冷却时被取消"
-				summary.Skipped++
-				accumulateSkipReason(summary.SkipReasons, row.Reason)
-				summary.Items = append(summary.Items, row)
-				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
-				done++
-				s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
-				continue targetLoop
-			case <-timer.C:
-				summary.Waiting = false
-				summary.WaitingReason = ""
-				summary.WaitingUntil = ""
+			heartbeat := time.NewTicker(time.Minute)
+			waitFinished := false
+			for !waitFinished {
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					heartbeat.Stop()
+					row.Status = "skipped"
+					row.Reason = "任务等待监听号冷却时被取消"
+					summary.Skipped++
+					accumulateSkipReason(summary.SkipReasons, row.Reason)
+					summary.Items = append(summary.Items, row)
+					_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
+					done++
+					s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
+					continue targetLoop
+				case <-heartbeat.C:
+					_ = s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ? AND status = ?", task.ID, "running").Updates(map[string]any{
+						"run_locked_at": time.Now(),
+						"updated_at":    time.Now(),
+					}).Error
+				case <-timer.C:
+					waitFinished = true
+				}
 			}
+			heartbeat.Stop()
+			summary.Waiting = false
+			summary.WaitingReason = ""
+			summary.WaitingUntil = ""
 		}
 		accountRef := listenerAccountJoinLabel(account)
 		row.TerminalID = account.ID.String()
