@@ -94,6 +94,27 @@ func TestMergeMixedAccountUnitsPrefersTData(t *testing.T) {
 	}
 }
 
+func TestMergeListenerAccountUnitsPrefersSessionForLightweightTData(t *testing.T) {
+	sessionUnits := []importUnit{
+		{Name: "bundle/573114769163/573114769163.session", AccessType: "session"},
+	}
+	tdataUnits := []importUnit{
+		{Name: "bundle/573114769163/tdata.zip", AccessType: "data", SourceSize: 5, Data: make([]byte, 1500)},
+	}
+
+	merged, skipped := mergeListenerAccountUnits(sessionUnits, tdataUnits)
+
+	if len(merged) != 1 {
+		t.Fatalf("merged units = %d, want 1", len(merged))
+	}
+	if merged[0].AccessType != "session" || merged[0].Name != "bundle/573114769163/573114769163.session" {
+		t.Fatalf("expected session to be preferred, got %+v", merged[0])
+	}
+	if len(skipped) != 1 || skipped[0].Unit.AccessType != "data" {
+		t.Fatalf("expected lightweight tdata to be skipped, got %+v", skipped)
+	}
+}
+
 func TestParseProxyExitPayload(t *testing.T) {
 	tests := []struct {
 		name    string

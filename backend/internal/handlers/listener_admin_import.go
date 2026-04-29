@@ -267,13 +267,67 @@ func (s *Server) buildListenerAccountUploadUnits(form *multipart.Form) (listener
 		}
 		tdataUnits = append(tdataUnits, importUnit{Name: key + ".zip", Data: data, AccessType: "data", SourceSize: len(tdataGroups[key])})
 	}
-	units, skipped := mergeMixedAccountUnits(sessionUnits, tdataUnits)
+	units, skipped := mergeListenerAccountUnits(sessionUnits, tdataUnits)
 	for _, item := range skipped {
 		build.Skipped++
 		build.Items = append(build.Items, listenerImportResult{Line: item.Unit.Name, Status: "skipped", Reason: item.Reason})
 	}
 	build.Units = units
 	return build, nil
+}
+
+func mergeListenerAccountUnits(sessionUnits, tdataUnits []importUnit) ([]importUnit, []importMergeSkip) {
+	sessionByPhone := map[string]importUnit{}
+	for _, unit := range sessionUnits {
+		if phone := normalizeTerminalPhone(extractPhone(unit.Name)); phone != "" {
+			sessionByPhone[phone] = unit
+		}
+	}
+
+	merged := make([]importUnit, 0, len(sessionUnits)+len(tdataUnits))
+	skipped := make([]importMergeSkip, 0)
+	tdataPhones := make(map[string]bool, len(tdataUnits))
+	sessionPreferred := map[string]bool{}
+
+	for _, unit := range tdataUnits {
+		phone := normalizeTerminalPhone(extractPhone(unit.Name))
+		if phone != "" {
+			tdataPhones[phone] = true
+		}
+		if phone != "" && isLightweightTDataUnit(unit) {
+			if session, ok := sessionByPhone[phone]; ok {
+				merged = append(merged, session)
+				sessionPreferred[phone] = true
+				skipped = append(skipped, importMergeSkip{
+					Unit:   unit,
+					Reason: "同账号同时包含轻量 TData 和 Session，已优先使用 Session",
+				})
+				continue
+			}
+		}
+		merged = append(merged, unit)
+	}
+
+	for _, unit := range sessionUnits {
+		phone := normalizeTerminalPhone(extractPhone(unit.Name))
+		if phone != "" && sessionPreferred[phone] {
+			continue
+		}
+		if phone != "" && tdataPhones[phone] {
+			skipped = append(skipped, importMergeSkip{
+				Unit:   unit,
+				Reason: "同账号已识别 TData，Session 已合并跳过",
+			})
+			continue
+		}
+		merged = append(merged, unit)
+	}
+
+	return merged, skipped
+}
+
+func isLightweightTDataUnit(unit importUnit) bool {
+	return unit.AccessType == "data" && unit.SourceSize > 0 && unit.SourceSize <= 6 && len(unit.Data) < 128*1024
 }
 
 func isArchiveRootTDataKey(key string) bool {
