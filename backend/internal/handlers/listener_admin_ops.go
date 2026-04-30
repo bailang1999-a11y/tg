@@ -1386,21 +1386,17 @@ func (s *Server) runListenerTargetRefreshTask(ctx context.Context, task models.T
 		s.finishListenerTargetRefreshTask(ctx, task, "failed", listenerTargetRefreshSummary{TaskID: task.ID.String(), Items: []joinTargetsResultRow{}}, err.Error())
 		return
 	}
-	account, ok := s.pickListenerInspectorAccount(ctx, task.TenantID)
-	if !ok {
+	accounts := s.listListenerInspectorAccounts(ctx, task.TenantID)
+	if len(accounts) == 0 {
 		s.finishListenerTargetRefreshTask(ctx, task, "failed", listenerTargetRefreshSummary{TaskID: task.ID.String(), Total: len(targets), Items: []joinTargetsResultRow{}}, "没有可用于刷新监听群资料的监听号，请先导入并检测监听号")
 		return
 	}
 	inspector := telegram_client.NewTargetInspector(s.cfg)
 	summary := listenerTargetRefreshSummary{TaskID: task.ID.String(), Total: len(targets), Items: []joinTargetsResultRow{}}
-	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始刷新监听群资料：共 %d 个监听群，使用监听号 %s", len(targets), listenerAccountJoinLabel(account)), listenerAccountJoinLabel(account), "")
+	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始刷新监听群资料：共 %d 个监听群，可用监听号 %d 个，失败时会自动换号重试", len(targets), len(accounts)), "", "")
 	for index, target := range targets {
 		targetRef := targetJoinLabel(models.Target{Identifier: target.Identifier, Name: target.Name, Type: target.Type})
-		result, err := inspector.Inspect(ctx, telegram_client.TargetInspectRequest{
-			FilePath:   account.FilePath,
-			AccessType: account.AccessType,
-			Target:     target.Identifier,
-		})
+		account, result, err, attempts := s.inspectListenerTargetWithFallback(ctx, inspector, accounts, target.Identifier, index)
 		updates := map[string]any{"updated_at": time.Now()}
 		row := joinTargetsResultRow{TerminalID: account.ID.String(), Terminal: listenerAccountJoinLabel(account), TargetID: target.ID.String(), Target: targetRef}
 		if err == nil && result.OK {
@@ -1418,6 +1414,9 @@ func (s *Server) runListenerTargetRefreshTask(ctx context.Context, task models.T
 			summary.Failed++
 			row.Status = "failed"
 			row.Reason = translateTelegramReasonToChinese(firstNonEmpty(result.Reason, errorString(err), "监听群资料刷新失败"))
+			if attempts != "" {
+				row.Reason = row.Reason + "；已尝试：" + attempts
+			}
 			_ = s.createTaskLog(ctx, task, "ERROR", "target_refresh_failed", fmt.Sprintf("监听群 %s 刷新失败：%s", targetRef, row.Reason), row.Terminal, targetRef)
 		}
 		summary.Items = append(summary.Items, row)
@@ -1469,6 +1468,53 @@ func (s *Server) pickListenerInspectorAccount(ctx context.Context, tenantID uuid
 		return models.ListenerAccount{}, false
 	}
 	return account, true
+}
+
+func (s *Server) listListenerInspectorAccounts(ctx context.Context, tenantID uuid.UUID) []models.ListenerAccount {
+	var accounts []models.ListenerAccount
+	_ = s.db.WithContext(ctx).
+		Where("tenant_id = ? AND file_path <> '' AND status NOT IN ?", tenantID, []string{"abnormal", "failed"}).
+		Order("updated_at asc").
+		Find(&accounts).Error
+	ready := make([]models.ListenerAccount, 0, len(accounts))
+	for _, account := range accounts {
+		if strings.TrimSpace(account.FilePath) != "" && isStoredTerminalFileReady(account.FilePath) {
+			ready = append(ready, account)
+		}
+	}
+	return ready
+}
+
+func (s *Server) inspectListenerTargetWithFallback(ctx context.Context, inspector telegram_client.TargetInspector, accounts []models.ListenerAccount, target string, targetIndex int) (models.ListenerAccount, telegram_client.TargetInspectResult, error, string) {
+	if len(accounts) == 0 {
+		return models.ListenerAccount{}, telegram_client.TargetInspectResult{Status: "failed", Reason: "没有可用监听号", Identifier: target}, fmt.Errorf("没有可用监听号"), ""
+	}
+	maxAttempts := minInt(len(accounts), 5)
+	start := 0
+	if len(accounts) > 0 {
+		start = targetIndex % len(accounts)
+	}
+	attemptDetails := make([]string, 0, maxAttempts)
+	var lastAccount models.ListenerAccount
+	var lastResult telegram_client.TargetInspectResult
+	var lastErr error
+	for offset := 0; offset < maxAttempts; offset++ {
+		account := accounts[(start+offset)%len(accounts)]
+		result, err := inspector.Inspect(ctx, telegram_client.TargetInspectRequest{
+			FilePath:   account.FilePath,
+			AccessType: account.AccessType,
+			Target:     target,
+		})
+		if err == nil && result.OK {
+			return account, result, nil, strings.Join(attemptDetails, "；")
+		}
+		lastAccount = account
+		lastResult = result
+		lastErr = err
+		reason := translateTelegramReasonToChinese(firstNonEmpty(result.Reason, errorString(err), "刷新失败"))
+		attemptDetails = append(attemptDetails, listenerAccountJoinLabel(account)+"："+reason)
+	}
+	return lastAccount, lastResult, lastErr, strings.Join(attemptDetails, "；")
 }
 
 func errorString(err error) string {
