@@ -11,6 +11,9 @@ from opentele.api import API, UseCurrentSession
 from opentele.td import TDesktop
 from telethon import TelegramClient
 from telethon.errors import ChannelPrivateError, FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
+from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.messages import GetFullChatRequest
+from telethon.tl.types import Channel, Chat
 
 
 def emit(payload: dict) -> None:
@@ -56,6 +59,22 @@ def normalize_target(value: str) -> str:
     return target.lstrip("@")
 
 
+async def fetch_participants_count(client: TelegramClient, entity) -> int:
+    count = int(getattr(entity, "participants_count", 0) or 0)
+    if count > 0:
+        return count
+    try:
+        if isinstance(entity, Channel):
+            full = await client(GetFullChannelRequest(entity))
+            return int(getattr(getattr(full, "full_chat", None), "participants_count", 0) or 0)
+        if isinstance(entity, Chat):
+            full = await client(GetFullChatRequest(entity.id))
+            return int(getattr(getattr(full, "full_chat", None), "participants_count", 0) or 0)
+    except Exception:
+        return count
+    return count
+
+
 async def inspect_target(client: TelegramClient, target: str) -> dict:
     result = base_result(target)
     try:
@@ -70,7 +89,7 @@ async def inspect_target(client: TelegramClient, target: str) -> dict:
         result["name"] = title
         result["username"] = username
         result["type"] = "channel" if broadcast and not megagroup else "group"
-        result["size"] = int(getattr(entity, "participants_count", 0) or 0)
+        result["size"] = await fetch_participants_count(client, entity)
         if username:
             result["identifier"] = "https://t.me/" + username
         return result
