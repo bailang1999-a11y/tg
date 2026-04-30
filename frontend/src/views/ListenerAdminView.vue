@@ -478,43 +478,45 @@
     <Teleport to="body">
       <Transition name="dialog">
         <div v-if="healthSettingsOpen" class="modal-backdrop" @click.self="closeHealthSettings">
-          <div class="modal-card p-6 lg:p-7">
-            <div class="panel-title-row mb-5">
+          <div class="modal-card health-settings-dialog p-6 lg:p-7">
+            <div class="panel-title-row health-settings-header">
               <span class="panel-icon">⌁</span>
               <div>
                 <h2 class="text-xl font-black text-white">{{ healthSettingsTitle }}</h2>
                 <p class="text-sm text-steel">保存后调度器会自动创建对应检测任务，任务中心和日志中心会显示进度与结果。</p>
               </div>
             </div>
-            <div class="space-y-3">
-              <label class="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                <div>
+            <div class="health-settings-form">
+              <label v-if="healthSettingsMode === 'account'" class="health-toggle-row">
+                <div class="min-w-0">
                   <div class="font-semibold">自动刷新监听账号状态</div>
                   <div class="mt-1 text-sm text-steel">周期性创建“一键检测监听账号状态”任务</div>
                 </div>
                 <input v-model="healthSettingsForm.autoAccountCheckEnabled" type="checkbox" class="h-5 w-5" />
               </label>
-              <label class="rounded-2xl border border-white/10 bg-white/5 p-4" :class="{ 'settings-focus': healthSettingsMode === 'account' }">
-                <div class="text-sm text-steel">账号状态检测周期（分钟）</div>
-                <input v-model.number="healthSettingsForm.accountCheckIntervalMinutes" type="number" min="5" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              <label v-if="healthSettingsMode === 'account'" class="health-field">
+                <span>账号状态检测周期（分钟）</span>
+                <input v-model.number="healthSettingsForm.accountCheckIntervalMinutes" type="number" min="5" max="1440" />
               </label>
-              <label class="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                <div>
+
+              <label v-if="healthSettingsMode === 'proxy'" class="health-toggle-row">
+                <div class="min-w-0">
                   <div class="font-semibold">自动刷新代理列表延迟</div>
                   <div class="mt-1 text-sm text-steel">周期性检测代理入口、真实出口、Web 和客户端连通性</div>
                 </div>
                 <input v-model="healthSettingsForm.autoProxyCheckEnabled" type="checkbox" class="h-5 w-5" />
               </label>
-              <label class="rounded-2xl border border-white/10 bg-white/5 p-4" :class="{ 'settings-focus': healthSettingsMode === 'proxy' }">
-                <div class="text-sm text-steel">代理列表检测周期（分钟）</div>
-                <input v-model.number="healthSettingsForm.proxyCheckIntervalMinutes" type="number" min="5" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+              <label v-if="healthSettingsMode === 'proxy'" class="health-field">
+                <span>代理列表检测周期（分钟）</span>
+                <input v-model.number="healthSettingsForm.proxyCheckIntervalMinutes" type="number" min="5" max="1440" />
               </label>
-              <label class="rounded-2xl border border-white/10 bg-white/5 p-4">
-                <div class="text-sm text-steel">无消息提醒阈值（分钟）</div>
-                <input v-model.number="healthSettingsForm.silenceAlertMinutes" type="number" min="1" max="1440" class="mt-3 min-h-11 w-full rounded-lg px-3 text-sm" />
+
+              <label class="health-field">
+                <span>无消息提醒阈值（分钟）</span>
+                <input v-model.number="healthSettingsForm.silenceAlertMinutes" type="number" min="1" max="1440" />
               </label>
             </div>
-            <div class="mt-7 flex flex-wrap justify-end gap-3">
+            <div class="health-settings-actions">
               <GlassButton variant="ghost" @click="closeHealthSettings">取消</GlassButton>
               <GlassButton variant="primary" :loading="healthSettingsSaving" @click="saveHealthSettings">保存定时设置</GlassButton>
             </div>
@@ -1983,10 +1985,60 @@ onUnmounted(() => {
 .country-badge {
   color: #dbeafe;
 }
-.settings-focus {
-  border-color: rgba(34,211,238,.42) !important;
-  background: rgba(34,211,238,.1) !important;
-  box-shadow: inset 0 1px rgba(255,255,255,.1), 0 0 0 1px rgba(34,211,238,.12);
+.health-settings-dialog {
+  width: min(34rem, calc(100vw - 2rem));
+}
+.health-settings-header {
+  margin-bottom: 22px;
+}
+.health-settings-form {
+  display: grid;
+  gap: 14px;
+}
+.health-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  min-height: 74px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+  padding: 16px 18px;
+}
+.health-toggle-row input {
+  flex: 0 0 auto;
+  accent-color: var(--accent-cyan);
+}
+.health-field {
+  display: grid;
+  gap: 8px;
+}
+.health-field span {
+  color: var(--app-text-muted);
+  font-size: 0.84rem;
+}
+.health-field input {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.72);
+  padding: 0 14px;
+  color: var(--app-text);
+  font-size: 0.92rem;
+  outline: none;
+}
+.health-field input:focus {
+  border-color: rgba(34, 211, 238, 0.58);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.12);
+}
+.health-settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 26px;
 }
 .empty-cell { text-align: center; color: var(--app-text-muted); padding: 30px !important; }
 @media (max-width: 1280px) { .listener-action-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -1995,5 +2047,17 @@ onUnmounted(() => {
   .list-toolbar { align-items: stretch; flex-direction: column; }
   .toolbar-actions { justify-content: stretch; }
   .toolbar-actions > * { width: 100%; }
+}
+@media (max-width: 640px) {
+  .health-settings-dialog {
+    width: min(100%, calc(100vw - 1.25rem));
+  }
+  .health-toggle-row {
+    align-items: flex-start;
+    padding: 14px;
+  }
+  .health-settings-actions > * {
+    flex: 1 1 0;
+  }
 }
 </style>
