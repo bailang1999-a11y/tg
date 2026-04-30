@@ -38,7 +38,7 @@ export const listenerApi = {
     request<{ deleted: number }>(`/api/v1/listener-admin/accounts/${id}`, { method: 'DELETE' }),
   listenerTargets: (groupID = '') => request<ListenerTarget[]>(`/api/v1/listener-admin/targets${groupID ? `?group_id=${groupID}` : ''}`),
   refreshListenerTargets: (payload: { group_id?: string }) =>
-    request<ListenerTargetRefreshSummary>('/api/v1/listener-admin/targets/refresh', { method: 'POST', body: JSON.stringify(payload) }),
+    request<{ task: Task; summary: ListenerTargetRefreshSummary }>('/api/v1/listener-admin/targets/refresh', { method: 'POST', body: JSON.stringify(payload) }),
   importListenerTargets: (payload: { content: string; group_id?: string; new_group_name?: string }) =>
     request<TargetImportSummary>('/api/v1/listener-admin/targets/import', { method: 'POST', body: JSON.stringify(payload) }),
   deleteListenerTarget: (id: string) =>

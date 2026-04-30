@@ -1312,34 +1312,97 @@ func (s *Server) RefreshListenerTargets(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&req)
 	tenantID := s.tenantID(c)
-	query := s.db.WithContext(c.Request.Context()).Where("tenant_id = ?", tenantID).Order("created_at desc")
-	if strings.TrimSpace(req.GroupID) != "" {
-		groupID, err := uuid.Parse(strings.TrimSpace(req.GroupID))
+	req.GroupID = strings.TrimSpace(req.GroupID)
+	targets, err := s.loadListenerTargetRefreshSelection(c.Request.Context(), tenantID, req.GroupID)
+	if err != nil {
+		utils.Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	payload, _ := json.Marshal(req)
+	task := models.Task{
+		ID:        uuid.New(),
+		TenantID:  tenantID,
+		Name:      "一键刷新群资料",
+		Type:      "listener_target_refresh",
+		Status:    "queued",
+		Progress:  0,
+		Payload:   datatypes.JSON(payload),
+		CreatedBy: s.userIDPtr(c),
+	}
+	if err := s.db.WithContext(c.Request.Context()).Create(&task).Error; err != nil {
+		utils.Fail(c, http.StatusInternalServerError, "创建监听群资料刷新任务失败")
+		return
+	}
+	_ = s.createTaskLog(c.Request.Context(), task, "INFO", "created", fmt.Sprintf("监听群资料刷新任务已创建：待刷新 %d 个监听群", len(targets)), "", "")
+	if !s.enqueueTask(c.Request.Context(), task, "run") {
+		go s.runListenerTargetRefreshTask(context.Background(), task, req.GroupID)
+	}
+	utils.Created(c, gin.H{"task": task, "summary": listenerTargetRefreshSummary{TaskID: task.ID.String(), Total: len(targets)}})
+}
+
+func (s *Server) RunListenerTargetRefreshTask(taskID uuid.UUID) {
+	ctx := context.Background()
+	claimed, release := s.claimTaskRun(ctx, taskID, "listener_target_refresh")
+	if !claimed {
+		return
+	}
+	defer release()
+
+	var task models.Task
+	if err := s.db.WithContext(ctx).Where("id = ? AND type = ?", taskID, "listener_target_refresh").First(&task).Error; err != nil {
+		return
+	}
+	var req struct {
+		GroupID string `json:"group_id"`
+	}
+	if len(task.Payload) > 0 {
+		_ = json.Unmarshal(task.Payload, &req)
+	}
+	s.runListenerTargetRefreshTask(ctx, task, strings.TrimSpace(req.GroupID))
+}
+
+func (s *Server) loadListenerTargetRefreshSelection(ctx context.Context, tenantID uuid.UUID, groupIDText string) ([]models.ListenerTarget, error) {
+	query := s.db.WithContext(ctx).Where("tenant_id = ?", tenantID).Order("created_at desc")
+	if strings.TrimSpace(groupIDText) != "" {
+		groupID, err := uuid.Parse(strings.TrimSpace(groupIDText))
 		if err != nil {
-			utils.Fail(c, http.StatusBadRequest, "监听群分组无效")
-			return
+			return nil, fmt.Errorf("监听群分组无效")
 		}
 		query = query.Where("group_id = ?", groupID)
 	}
 	var targets []models.ListenerTarget
 	if err := query.Find(&targets).Error; err != nil {
-		utils.Fail(c, http.StatusInternalServerError, "读取监听群失败")
+		return nil, fmt.Errorf("读取监听群失败")
+	}
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("当前范围内没有监听群")
+	}
+	return targets, nil
+}
+
+func (s *Server) runListenerTargetRefreshTask(ctx context.Context, task models.Task, groupIDText string) {
+	targets, err := s.loadListenerTargetRefreshSelection(ctx, task.TenantID, groupIDText)
+	if err != nil {
+		s.finishListenerTargetRefreshTask(ctx, task, "failed", listenerTargetRefreshSummary{TaskID: task.ID.String(), Items: []joinTargetsResultRow{}}, err.Error())
 		return
 	}
-	account, ok := s.pickListenerInspectorAccount(c, tenantID)
+	account, ok := s.pickListenerInspectorAccount(ctx, task.TenantID)
 	if !ok {
-		utils.Fail(c, http.StatusBadRequest, "没有可用于刷新监听群资料的监听号，请先导入并检测监听号")
+		s.finishListenerTargetRefreshTask(ctx, task, "failed", listenerTargetRefreshSummary{TaskID: task.ID.String(), Total: len(targets), Items: []joinTargetsResultRow{}}, "没有可用于刷新监听群资料的监听号，请先导入并检测监听号")
 		return
 	}
 	inspector := telegram_client.NewTargetInspector(s.cfg)
-	summary := listenerTargetRefreshSummary{Total: len(targets)}
-	for _, target := range targets {
-		result, err := inspector.Inspect(c.Request.Context(), telegram_client.TargetInspectRequest{
+	summary := listenerTargetRefreshSummary{TaskID: task.ID.String(), Total: len(targets), Items: []joinTargetsResultRow{}}
+	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始刷新监听群资料：共 %d 个监听群，使用监听号 %s", len(targets), listenerAccountJoinLabel(account)), listenerAccountJoinLabel(account), "")
+	for index, target := range targets {
+		targetRef := targetJoinLabel(models.Target{Identifier: target.Identifier, Name: target.Name, Type: target.Type})
+		result, err := inspector.Inspect(ctx, telegram_client.TargetInspectRequest{
 			FilePath:   account.FilePath,
 			AccessType: account.AccessType,
 			Target:     target.Identifier,
 		})
 		updates := map[string]any{"updated_at": time.Now()}
+		row := joinTargetsResultRow{TerminalID: account.ID.String(), Terminal: listenerAccountJoinLabel(account), TargetID: target.ID.String(), Target: targetRef}
 		if err == nil && result.OK {
 			updates["identifier"] = firstNonEmpty(result.Identifier, target.Identifier)
 			updates["name"] = firstNonEmpty(result.Name, target.Name)
@@ -1347,21 +1410,58 @@ func (s *Server) RefreshListenerTargets(c *gin.Context) {
 			updates["size"] = result.Size
 			updates["status"] = firstNonEmpty(result.Status, "active")
 			summary.Success++
+			row.Status = "success"
+			row.Reason = firstNonEmpty(result.Reason, "监听群资料刷新成功")
+			_ = s.createTaskLog(ctx, task, "INFO", "target_refresh_success", fmt.Sprintf("监听群 %s 刷新成功：名称 %s，类型 %s，成员数 %d", targetRef, firstNonEmpty(result.Name, target.Name, "-"), firstNonEmpty(result.Type, target.Type, "-"), result.Size), row.Terminal, targetRef)
 		} else {
 			updates["status"] = "failed"
 			summary.Failed++
+			row.Status = "failed"
+			row.Reason = translateTelegramReasonToChinese(firstNonEmpty(result.Reason, errorString(err), "监听群资料刷新失败"))
+			_ = s.createTaskLog(ctx, task, "ERROR", "target_refresh_failed", fmt.Sprintf("监听群 %s 刷新失败：%s", targetRef, row.Reason), row.Terminal, targetRef)
 		}
-		if err := s.db.WithContext(c.Request.Context()).Model(&models.ListenerTarget{}).Where("tenant_id = ? AND id = ?", tenantID, target.ID).Updates(updates).Error; err != nil {
-			utils.Fail(c, http.StatusInternalServerError, "更新监听群资料失败")
+		summary.Items = append(summary.Items, row)
+		if err := s.db.WithContext(ctx).Model(&models.ListenerTarget{}).Where("tenant_id = ? AND id = ?", task.TenantID, target.ID).Updates(updates).Error; err != nil {
+			detail := fmt.Sprintf("监听群 %s 数据库更新失败：%s", targetRef, err.Error())
+			_ = s.createTaskLog(ctx, task, "ERROR", "target_refresh_failed", detail, row.Terminal, targetRef)
+			s.finishListenerTargetRefreshTask(ctx, task, "failed", summary, detail)
 			return
 		}
+		progress := 5 + int(float64(index+1)/float64(len(targets))*90)
+		if progress > 95 {
+			progress = 95
+		}
+		payload, _ := json.Marshal(summary)
+		_ = s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
+			"status":   "running",
+			"progress": progress,
+			"summary":  datatypes.JSON(payload),
+		}).Error
 	}
-	utils.OK(c, summary)
+	status := "success"
+	if summary.Success == 0 && summary.Failed > 0 {
+		status = "failed"
+	} else if summary.Failed > 0 {
+		status = "partial_success"
+	}
+	s.finishListenerTargetRefreshTask(ctx, task, status, summary, fmt.Sprintf("监听群资料刷新完成：成功 %d，失败 %d", summary.Success, summary.Failed))
 }
 
-func (s *Server) pickListenerInspectorAccount(c *gin.Context, tenantID uuid.UUID) (models.ListenerAccount, bool) {
+func (s *Server) finishListenerTargetRefreshTask(ctx context.Context, task models.Task, status string, summary listenerTargetRefreshSummary, detail string) {
+	payload, _ := json.Marshal(summary)
+	s.updateTaskState(ctx, task.ID, status, 100, datatypes.JSON(payload))
+	level := "INFO"
+	if status == "failed" {
+		level = "ERROR"
+	} else if status == "partial_success" {
+		level = "WARN"
+	}
+	_ = s.createTaskLog(ctx, task, level, "summary", detail, "", "")
+}
+
+func (s *Server) pickListenerInspectorAccount(ctx context.Context, tenantID uuid.UUID) (models.ListenerAccount, bool) {
 	var account models.ListenerAccount
-	err := s.db.WithContext(c.Request.Context()).
+	err := s.db.WithContext(ctx).
 		Where("tenant_id = ? AND file_path <> '' AND status NOT IN ?", tenantID, []string{"abnormal", "failed"}).
 		Order("updated_at asc").
 		First(&account).Error
@@ -1369,6 +1469,13 @@ func (s *Server) pickListenerInspectorAccount(c *gin.Context, tenantID uuid.UUID
 		return models.ListenerAccount{}, false
 	}
 	return account, true
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (s *Server) DeleteListenerAccount(c *gin.Context) {

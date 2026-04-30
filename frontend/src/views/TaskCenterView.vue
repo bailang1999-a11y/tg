@@ -1,8 +1,8 @@
 <template>
   <div class="page-shell">
     <PageToolbar
-      title="运行中任务"
-      subtitle="展示正在运行、排队和等待执行的任务，长耗时操作会在这里持续更新进度。"
+      title="任务模块"
+      subtitle="展示运行中、排队、已完成和失败的任务，长耗时操作会在这里持续更新进度和日志。"
     >
       <template #actions>
         <span class="status-pill" :data-tone="riskPolicyTone">{{ riskPolicyPresetText }}</span>
@@ -24,8 +24,9 @@
         </label>
         <label class="filter-field">
           <span>任务状态</span>
-          <select v-model="filters.status" disabled>
-            <option value="">运行中 / 排队中</option>
+          <select v-model="filters.status" @change="load">
+            <option value="">全部状态</option>
+            <option v-for="option in taskStatusOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
           </select>
         </label>
         <label class="filter-field">
@@ -77,7 +78,7 @@
                 @click="selectTask(task)"
               >
                 <td class="py-3" @click.stop>
-                  <input :checked="selectedTaskIDs.includes(task.id)" :disabled="!isRunningTask(task)" type="checkbox" @change="toggleTaskSelection(task.id)" />
+                  <input :checked="selectedTaskIDs.includes(task.id)" :disabled="!isControllableTask(task)" type="checkbox" @change="toggleTaskSelection(task.id)" />
                 </td>
                 <td class="py-3">
                   <div class="font-bold text-white">{{ taskDisplayName(task) }}</div>
@@ -250,7 +251,7 @@ const pagedTasks = computed(() => {
   const start = (taskPage.value - 1) * taskPageSize
   return filteredTasks.value.slice(start, start + taskPageSize)
 })
-const selectablePagedTasks = computed(() => pagedTasks.value.filter(isRunningTask))
+const selectablePagedTasks = computed(() => pagedTasks.value.filter(isControllableTask))
 const allVisibleSelected = computed(() => selectablePagedTasks.value.length > 0 && selectablePagedTasks.value.every((task) => selectedTaskIDs.value.includes(task.id)))
 const riskPolicyPresetText = computed(() => {
   const risk = systemSettings.value?.risk_control
@@ -305,24 +306,31 @@ const taskTypeOptions = [
   { value: 'bot_dm', label: 'Bot 私信任务' },
   { value: 'join_targets', label: '终端加入目标池' },
   { value: 'listener_join_targets', label: '监听号自动加群' },
+  { value: 'listener_target_refresh', label: '监听群资料刷新' },
   { value: 'listener_proxy_check', label: '监听代理检测' },
+  { value: 'listener_account_check', label: '监听账号检测' },
   { value: 'target_membership_refresh', label: '目标群状态刷新' }
 ]
-const activeTaskStatuses = ['running', 'active', 'queued', 'pending', 'retrying']
+const taskStatusOptions = [
+  { value: 'running', label: '执行中' },
+  { value: 'queued', label: '排队中' },
+  { value: 'pending', label: '待执行' },
+  { value: 'success', label: '执行成功' },
+  { value: 'partial_success', label: '部分成功' },
+  { value: 'failed', label: '执行失败' },
+  { value: 'stopped', label: '已停止' },
+  { value: 'paused', label: '已暂停' },
+  { value: 'completed', label: '已完成' }
+]
 
 async function load() {
   loading.value = true
   try {
-    filters.status = ''
-    const results = await Promise.all(
-      activeTaskStatuses.map((status) => api.tasks({ ...filters, status, limit: 500 }))
-    )
-    tasks.value = dedupeTasks(results.flat())
-      .filter(isRunningTask)
+    tasks.value = dedupeTasks(await api.tasks({ ...filters, limit: 500 }))
       .sort((left, right) => new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime())
     selectedTask.value = tasks.value.find((task) => task.id === selectedTask.value?.id) || tasks.value[0] || null
     await loadSelectedTaskLogs()
-    selectedTaskIDs.value = selectedTaskIDs.value.filter((id) => tasks.value.some((task) => task.id === id && isRunningTask(task)))
+    selectedTaskIDs.value = selectedTaskIDs.value.filter((id) => tasks.value.some((task) => task.id === id && isControllableTask(task)))
   } catch (err) {
     ui.toast({ title: '任务加载失败', message: err instanceof Error ? err.message : '请求失败', tone: 'error' })
   } finally {
@@ -363,7 +371,6 @@ async function action(id: string, next: string) {
 }
 
 function selectTask(task: Task) {
-  if (!isRunningTask(task)) return
   selectedTask.value = task
   void loadSelectedTaskLogs()
 }
@@ -383,7 +390,7 @@ async function loadSelectedTaskLogs() {
 
 function toggleTaskSelection(id: string) {
   const task = tasks.value.find((item) => item.id === id)
-  if (!task || !isRunningTask(task)) return
+  if (!task || !isControllableTask(task)) return
   selectedTaskIDs.value = selectedTaskIDs.value.includes(id)
     ? selectedTaskIDs.value.filter((item) => item !== id)
     : [...selectedTaskIDs.value, id]
@@ -465,6 +472,10 @@ function statusTone(status: string) {
 
 function isRunningTask(task: Task) {
   return ['running', 'active', 'queued', 'pending', 'retrying'].includes(normalizeKeyword(task.status))
+}
+
+function isControllableTask(task: Task) {
+  return isRunningTask(task)
 }
 
 function dedupeTasks(items: Task[]) {

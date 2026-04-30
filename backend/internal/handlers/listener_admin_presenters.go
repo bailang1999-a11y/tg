@@ -90,9 +90,11 @@ type listenerProxyCheckSummary struct {
 }
 
 type listenerTargetRefreshSummary struct {
-	Total   int `json:"total"`
-	Success int `json:"success"`
-	Failed  int `json:"failed"`
+	TaskID  string                 `json:"task_id,omitempty"`
+	Total   int                    `json:"total"`
+	Success int                    `json:"success"`
+	Failed  int                    `json:"failed"`
+	Items   []joinTargetsResultRow `json:"items,omitempty"`
 }
 
 func parseListenerAccountLine(line string) (string, string) {

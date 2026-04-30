@@ -1155,8 +1155,9 @@ async function refreshTargets() {
   message.value = ''
   error.value = ''
   try {
-    const summary = await api.refreshListenerTargets({ group_id: targetFilterGroupID.value })
-    message.value = `监听群刷新完成：总数 ${summary.total}，成功 ${summary.success}，失败 ${summary.failed}`
+    const result = await api.refreshListenerTargets({ group_id: targetFilterGroupID.value })
+    message.value = `监听群资料刷新任务已启动：总数 ${result.summary.total}，请到任务模块查看进度、日志和失败明细`
+    ui.toast({ title: '监听群资料刷新已启动', message: '任务模块和日志中心会持续显示进度。', tone: 'success' })
     await load()
   } catch (err) {
     error.value = err instanceof Error ? err.message : '刷新监听群资料失败'

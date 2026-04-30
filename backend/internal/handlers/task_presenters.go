@@ -137,6 +137,10 @@ func taskSettings(task models.Task) []taskSettingItem {
 		addSummary("waiting_reason", "等待状态")
 		addSummary("waiting_until", "预计恢复")
 		addSummary("top_skip_reason", "主要拦截原因")
+	case "listener_target_refresh":
+		addSummary("total", "监听群总数")
+		addSummary("success", "刷新成功")
+		addSummary("failed", "刷新失败")
 	case "listener_proxy_check":
 		addSummary("total", "代理总数")
 		addSummary("normal", "正常")
@@ -223,6 +227,8 @@ func taskTypeText(value string) string {
 		return "终端加入目标池"
 	case "listener_join_targets":
 		return "监听号自动加群"
+	case "listener_target_refresh":
+		return "监听群资料刷新"
 	case "listener_proxy_check":
 		return "监听代理检测"
 	case "listener_account_check":
@@ -371,6 +377,10 @@ func taskLogActionText(value string) string {
 		return "加入目标失败"
 	case "join_skipped":
 		return "加入目标跳过"
+	case "target_refresh_success":
+		return "刷新群资料成功"
+	case "target_refresh_failed":
+		return "刷新群资料失败"
 	case "listener_join_targets":
 		return "监听号自动加群"
 	case "adapter":
@@ -459,11 +469,44 @@ func taskLogDetailText(value string) string {
 	for oldText, newText := range replacements {
 		text = strings.ReplaceAll(text, oldText, newText)
 	}
+	text = translateTelegramReasonToChinese(text)
 	text = regexp.MustCompile(`(?i)exit status\s+(\d+)`).ReplaceAllString(text, "退出状态 $1")
 	text = strings.ReplaceAll(text, "TFileNotFound", "文件不存在")
 	text = strings.ReplaceAll(text, "opentele.exception.", "")
 	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
 	return strings.TrimSpace(text)
+}
+
+func translateTelegramReasonToChinese(reason string) string {
+	text := strings.TrimSpace(reason)
+	if text == "" {
+		return text
+	}
+	text = regexp.MustCompile(`(?i)No user has "([^"]+)" as username`).ReplaceAllString(text, `Telegram 未找到用户名「$1」，请检查目标群链接是否失效或拼写错误`)
+	translations := []struct {
+		pattern *regexp.Regexp
+		value   string
+	}{
+		{regexp.MustCompile(`(?i)The username is not occupied by anyone`), "Telegram 未找到这个用户名，请检查目标群链接是否失效或拼写错误"},
+		{regexp.MustCompile(`(?i)Nobody is using this username`), "Telegram 未找到这个用户名，请检查目标群链接是否失效或拼写错误"},
+		{regexp.MustCompile(`(?i)Username not found`), "Telegram 未找到这个用户名，请检查目标群链接是否失效或拼写错误"},
+		{regexp.MustCompile(`(?i)Cannot find any entity corresponding to`), "无法识别目标群，请检查链接或用户名是否正确"},
+		{regexp.MustCompile(`(?i)Could not find the input entity`), "无法读取目标群信息，请检查链接或账号权限"},
+		{regexp.MustCompile(`(?i)The invite link is expired or has been revoked`), "邀请链接已过期或已被撤销"},
+		{regexp.MustCompile(`(?i)Invite hash expired`), "邀请链接已过期"},
+		{regexp.MustCompile(`(?i)Invite hash invalid`), "邀请链接无效"},
+		{regexp.MustCompile(`(?i)You have successfully requested to join this chat or channel`), "已提交入群申请，等待群管理员审核"},
+		{regexp.MustCompile(`(?i)You have joined too many channels/supergroups`), "该账号加入的群组过多，Telegram 已限制继续加群"},
+		{regexp.MustCompile(`(?i)The user is already a participant|User already participant`), "账号已经在这个群里"},
+		{regexp.MustCompile(`(?i)The channel specified is private`), "目标群是私密群，当前账号无法直接访问"},
+		{regexp.MustCompile(`(?i)AUTH_KEY_UNREGISTERED|SESSION_REVOKED`), "账号会话已失效，需要重新导入"},
+		{regexp.MustCompile(`(?i)USER_DEACTIVATED`), "账号已被 Telegram 停用"},
+		{regexp.MustCompile(`(?i)PHONE_NUMBER_BANNED`), "手机号已被 Telegram 封禁"},
+	}
+	for _, item := range translations {
+		text = item.pattern.ReplaceAllString(text, item.value)
+	}
+	return text
 }
 
 func humanizeUnknownAction(action string) string {

@@ -1,6 +1,6 @@
 {
   "name": "codex3-ops-console",
-  "version": "1.0.60",
+  "version": "1.0.61",
   "private": true,
   "type": "module",
   "scripts": {

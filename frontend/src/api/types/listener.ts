@@ -94,6 +94,7 @@ export type ListenerProxyCheckSummary = {
 }
 
 export type ListenerTargetRefreshSummary = {
+  task_id?: string
   total: number
   success: number
   failed: number

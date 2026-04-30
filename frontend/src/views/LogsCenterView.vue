@@ -132,6 +132,8 @@ const taskTypeOptions = [
   { value: 'scrm_listener', label: '监听任务' },
   { value: 'bot_dm', label: 'Bot 私信任务' },
   { value: 'join_targets', label: '终端加入目标池' },
+  { value: 'listener_join_targets', label: '监听号自动加群' },
+  { value: 'listener_target_refresh', label: '监听群资料刷新' },
   { value: 'listener_proxy_check', label: '监听代理检测' },
   { value: 'target_membership_refresh', label: '目标群状态刷新' }
 ]

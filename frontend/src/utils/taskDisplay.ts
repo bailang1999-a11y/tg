@@ -17,6 +17,7 @@ const taskTypeLabels: Record<string, string> = {
   bot_dm: 'Bot 私信任务',
   join_targets: '加群任务',
   listener_join_targets: '监听号自动加群',
+  listener_target_refresh: '监听群资料刷新',
   listener_proxy_check: '监听代理检测',
   target_membership_refresh: '目标群状态刷新',
   workflow_execution: '工作流执行任务',
