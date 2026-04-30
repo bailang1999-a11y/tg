@@ -1393,57 +1393,98 @@ func (s *Server) runListenerTargetRefreshTask(ctx context.Context, task models.T
 	}
 	inspector := telegram_client.NewTargetInspector(s.cfg)
 	summary := listenerTargetRefreshSummary{TaskID: task.ID.String(), Total: len(targets), Items: []joinTargetsResultRow{}}
-	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始刷新监听群资料：共 %d 个监听群，可用监听号 %d 个，失败时会自动换号重试", len(targets), len(accounts)), "", "")
-	for index, target := range targets {
-		targetRef := targetJoinLabel(models.Target{Identifier: target.Identifier, Name: target.Name, Type: target.Type})
-		account, result, err, attempts := s.inspectListenerTargetWithFallback(ctx, inspector, accounts, target.Identifier, index)
-		updates := map[string]any{"updated_at": time.Now()}
-		row := joinTargetsResultRow{TerminalID: account.ID.String(), Terminal: listenerAccountJoinLabel(account), TargetID: target.ID.String(), Target: targetRef}
-		if err == nil && result.OK {
-			updates["identifier"] = firstNonEmpty(result.Identifier, target.Identifier)
-			updates["name"] = firstNonEmpty(result.Name, target.Name)
-			updates["type"] = firstNonEmpty(result.Type, target.Type)
-			updates["size"] = result.Size
-			updates["status"] = firstNonEmpty(result.Status, "active")
-			summary.Success++
-			row.Status = "success"
-			row.Reason = firstNonEmpty(result.Reason, "监听群资料刷新成功")
-			_ = s.createTaskLog(ctx, task, "INFO", "target_refresh_success", fmt.Sprintf("监听群 %s 刷新成功：名称 %s，类型 %s，成员数 %d", targetRef, firstNonEmpty(result.Name, target.Name, "-"), firstNonEmpty(result.Type, target.Type, "-"), result.Size), row.Terminal, targetRef)
-		} else {
-			updates["status"] = "failed"
-			summary.Failed++
-			row.Status = "failed"
-			row.Reason = translateTelegramReasonToChinese(firstNonEmpty(result.Reason, errorString(err), "监听群资料刷新失败"))
-			if attempts != "" {
-				row.Reason = row.Reason + "；已尝试：" + attempts
-			}
-			_ = s.createTaskLog(ctx, task, "ERROR", "target_refresh_failed", fmt.Sprintf("监听群 %s 刷新失败：%s", targetRef, row.Reason), row.Terminal, targetRef)
-		}
-		summary.Items = append(summary.Items, row)
-		if err := s.db.WithContext(ctx).Model(&models.ListenerTarget{}).Where("tenant_id = ? AND id = ?", task.TenantID, target.ID).Updates(updates).Error; err != nil {
-			detail := fmt.Sprintf("监听群 %s 数据库更新失败：%s", targetRef, err.Error())
-			_ = s.createTaskLog(ctx, task, "ERROR", "target_refresh_failed", detail, row.Terminal, targetRef)
-			s.finishListenerTargetRefreshTask(ctx, task, "failed", summary, detail)
-			return
-		}
-		progress := 5 + int(float64(index+1)/float64(len(targets))*90)
-		if progress > 95 {
-			progress = 95
-		}
-		payload, _ := json.Marshal(summary)
-		_ = s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
-			"status":   "running",
-			"progress": progress,
-			"summary":  datatypes.JSON(payload),
-		}).Error
+	concurrency := 15
+	if concurrency > len(targets) {
+		concurrency = len(targets)
 	}
+	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始刷新监听群资料：共 %d 个监听群，可用监听号 %d 个，并发 %d，失败时会自动换号重试", len(targets), len(accounts), concurrency), "", "")
+	s.updateTaskState(ctx, task.ID, "running", 1, nil)
+	var summaryMu sync.Mutex
+	var progressMu sync.Mutex
+	var completed int
+	var firstUpdateErr error
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for index, target := range targets {
+		index := index
+		target := target
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			targetRef := targetJoinLabel(models.Target{Identifier: target.Identifier, Name: target.Name, Type: target.Type})
+			account, result, inspectErr, attempts := s.inspectListenerTargetWithFallback(ctx, inspector, accounts, target.Identifier, index)
+			updates := map[string]any{"updated_at": time.Now()}
+			row := joinTargetsResultRow{TerminalID: account.ID.String(), Terminal: listenerAccountJoinLabel(account), TargetID: target.ID.String(), Target: targetRef}
+			if inspectErr == nil && result.OK {
+				updates["identifier"] = firstNonEmpty(result.Identifier, target.Identifier)
+				updates["name"] = firstNonEmpty(result.Name, target.Name)
+				updates["type"] = firstNonEmpty(result.Type, target.Type)
+				updates["size"] = result.Size
+				updates["status"] = firstNonEmpty(result.Status, "active")
+				row.Status = "success"
+				row.Reason = firstNonEmpty(result.Reason, "监听群资料刷新成功")
+				_ = s.createTaskLog(ctx, task, "INFO", "target_refresh_success", fmt.Sprintf("监听群 %s 刷新成功：名称 %s，类型 %s，成员数 %d", targetRef, firstNonEmpty(result.Name, target.Name, "-"), firstNonEmpty(result.Type, target.Type, "-"), result.Size), row.Terminal, targetRef)
+			} else {
+				updates["status"] = "failed"
+				row.Status = "failed"
+				row.Reason = translateTelegramReasonToChinese(firstNonEmpty(result.Reason, errorString(inspectErr), "监听群资料刷新失败"))
+				if attempts != "" {
+					row.Reason = row.Reason + "；已尝试：" + attempts
+				}
+				_ = s.createTaskLog(ctx, task, "ERROR", "target_refresh_failed", fmt.Sprintf("监听群 %s 刷新失败：%s", targetRef, row.Reason), row.Terminal, targetRef)
+			}
+			if err := s.db.WithContext(ctx).Model(&models.ListenerTarget{}).Where("tenant_id = ? AND id = ?", task.TenantID, target.ID).Updates(updates).Error; err != nil {
+				detail := fmt.Sprintf("监听群 %s 数据库更新失败：%s", targetRef, err.Error())
+				_ = s.createTaskLog(ctx, task, "ERROR", "target_refresh_failed", detail, row.Terminal, targetRef)
+				progressMu.Lock()
+				if firstUpdateErr == nil {
+					firstUpdateErr = fmt.Errorf("%s", detail)
+				}
+				progressMu.Unlock()
+			}
+			summaryMu.Lock()
+			if row.Status == "success" {
+				summary.Success++
+			} else {
+				summary.Failed++
+			}
+			summary.Items = append(summary.Items, row)
+			payload, _ := json.Marshal(summary)
+			summaryMu.Unlock()
+			progressMu.Lock()
+			completed++
+			progress := 5 + int(float64(completed)/float64(len(targets))*90)
+			if progress > 95 {
+				progress = 95
+			}
+			_ = s.db.WithContext(ctx).Model(&models.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
+				"status":   "running",
+				"progress": progress,
+				"summary":  datatypes.JSON(payload),
+			}).Error
+			progressMu.Unlock()
+		}()
+	}
+	wg.Wait()
+	if firstUpdateErr != nil {
+		summaryMu.Lock()
+		finalSummary := summary
+		summaryMu.Unlock()
+		s.finishListenerTargetRefreshTask(ctx, task, "failed", finalSummary, firstUpdateErr.Error())
+		return
+	}
+	summaryMu.Lock()
+	finalSummary := summary
+	summaryMu.Unlock()
 	status := "success"
-	if summary.Success == 0 && summary.Failed > 0 {
+	if finalSummary.Success == 0 && finalSummary.Failed > 0 {
 		status = "failed"
-	} else if summary.Failed > 0 {
+	} else if finalSummary.Failed > 0 {
 		status = "partial_success"
 	}
-	s.finishListenerTargetRefreshTask(ctx, task, status, summary, fmt.Sprintf("监听群资料刷新完成：成功 %d，失败 %d", summary.Success, summary.Failed))
+	s.finishListenerTargetRefreshTask(ctx, task, status, finalSummary, fmt.Sprintf("监听群资料刷新完成：成功 %d，失败 %d，并发 %d", finalSummary.Success, finalSummary.Failed, concurrency))
 }
 
 func (s *Server) finishListenerTargetRefreshTask(ctx context.Context, task models.Task, status string, summary listenerTargetRefreshSummary, detail string) {
