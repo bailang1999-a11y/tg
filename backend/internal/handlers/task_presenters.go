@@ -492,6 +492,7 @@ func translateTelegramReasonToChinese(reason string) string {
 		{regexp.MustCompile(`(?i)Username not found`), "Telegram 未找到这个用户名，请检查目标群链接是否失效或拼写错误"},
 		{regexp.MustCompile(`(?i)Cannot find any entity corresponding to`), "无法识别目标群，请检查链接或用户名是否正确"},
 		{regexp.MustCompile(`(?i)Could not find the input entity`), "无法读取目标群信息，请检查链接或账号权限"},
+		{regexp.MustCompile(`(?i)Cannot cast User to any kind of InputChannel`), "这个链接指向普通用户或机器人，不是可加入的群/频道"},
 		{regexp.MustCompile(`(?i)The invite link is expired or has been revoked`), "邀请链接已过期或已被撤销"},
 		{regexp.MustCompile(`(?i)Invite hash expired`), "邀请链接已过期"},
 		{regexp.MustCompile(`(?i)Invite hash invalid`), "邀请链接无效"},

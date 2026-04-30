@@ -64,6 +64,19 @@ def normalize_invite_hash(identifier: str) -> str:
     return value
 
 
+def normalize_public_target(identifier: str) -> str:
+    value = (identifier or "").strip()
+    lower = value.lower()
+    for prefix in ("https://t.me/", "http://t.me/"):
+        if lower.startswith(prefix):
+            value = value[len(prefix):]
+            break
+    value = value.strip().strip("/")
+    if value.startswith("@"):
+        value = value[1:]
+    return value
+
+
 async def join_target(client: TelegramClient, target: str, target_type: str) -> dict:
     result = base_result(target, target_type)
     target = (target or "").strip()
@@ -76,8 +89,13 @@ async def join_target(client: TelegramClient, target: str, target_type: str) -> 
                 result["reason"] = "邀请链接缺少参数"
                 return result
             await client(ImportChatInviteRequest(invite_hash))
-        elif target_type == "channel":
-            await client(JoinChannelRequest(target.lstrip("@")))
+        elif target_type in ("channel", "group"):
+            public_target = normalize_public_target(target)
+            if not public_target:
+                result["reason"] = "公开群链接缺少用户名"
+                return result
+            entity = await client.get_entity(public_target)
+            await client(JoinChannelRequest(entity))
         elif target_type == "private_channel":
             result["reason"] = "私有频道 c/... 不能直接加入，请改用邀请链接"
             return result

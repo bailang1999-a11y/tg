@@ -1183,7 +1183,7 @@ func (s *Server) createTaskLogWithDuration(ctx context.Context, task models.Task
 
 func isJoinableTargetType(targetType string) bool {
 	switch strings.TrimSpace(targetType) {
-	case "channel", "invite":
+	case "channel", "group", "invite":
 		return true
 	default:
 		return false
