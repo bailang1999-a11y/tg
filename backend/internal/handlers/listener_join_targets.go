@@ -240,6 +240,7 @@ func (s *Server) runListenerJoinTargetsTask(ctx context.Context, task models.Tas
 	}
 	_ = s.createTaskLog(ctx, task, "INFO", "start", fmt.Sprintf("开始监听号自动加群：%d 个监听号，%d 个监听群，优先未覆盖目标", len(accounts), len(targets)), "", "")
 	joiner := telegram_client.NewJoiner(s.cfg)
+	inspector := telegram_client.NewTargetInspector(s.cfg)
 	done := 0
 targetLoop:
 	for _, target := range targets {
@@ -265,19 +266,27 @@ targetLoop:
 		for {
 			var quotaErr error
 			accounts = s.refreshListenerJoinAccounts(ctx, accounts)
-			accountIndex, account, quotaErr = s.pickListenerJoinAccount(ctx, accounts, target, req)
+			accountIndex, account, quotaErr = s.pickListenerJoinAccount(ctx, accounts, target, req, inspector)
 			if quotaErr == nil {
 				break
 			}
 			accounts = s.refreshListenerJoinAccounts(ctx, accounts)
 			waitUntil, waitReason := s.nextListenerJoinAccountRetryAt(ctx, accounts, target, req)
 			if waitUntil == nil || !waitUntil.After(time.Now()) {
-				row.Status = "skipped"
+				if isListenerJoinResolutionExhaustedReason(quotaErr.Error()) {
+					row.Status = "failed"
+					summary.Failed++
+					_ = s.createTaskLog(ctx, task, "ERROR", "join_failed", quotaErr.Error(), "", targetRef)
+				} else {
+					row.Status = "skipped"
+					summary.Skipped++
+					_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", quotaErr.Error(), "", targetRef)
+				}
 				row.Reason = quotaErr.Error()
-				summary.Skipped++
-				accumulateSkipReason(summary.SkipReasons, row.Reason)
+				if row.Status == "skipped" {
+					accumulateSkipReason(summary.SkipReasons, row.Reason)
+				}
 				summary.Items = append(summary.Items, row)
-				_ = s.createTaskLog(ctx, task, "WARN", "join_skipped", row.Reason, "", targetRef)
 				done++
 				s.updateListenerJoinTargetsProgress(ctx, task.ID, done, summary.Total, summary)
 				continue targetLoop
@@ -382,12 +391,33 @@ func listenerTargetsAsTargets(items []models.ListenerTarget) []models.Target {
 	return targets
 }
 
-func (s *Server) pickListenerJoinAccount(ctx context.Context, accounts []models.ListenerAccount, target models.Target, req listenerJoinTargetsRequest) (int, models.ListenerAccount, error) {
+func (s *Server) pickListenerJoinAccount(ctx context.Context, accounts []models.ListenerAccount, target models.Target, req listenerJoinTargetsRequest, inspector telegram_client.TargetInspector) (int, models.ListenerAccount, error) {
 	reasons := []string{}
+	resolutionFailures := []string{}
 	for index, account := range accounts {
 		if req.SkipAlreadyJoined && s.accountTargetAlreadyJoined(ctx, uuid.Nil, accountJoinKindListener, account.ID, target) {
 			reasons = append(reasons, fmt.Sprintf("%s 已加入该监听群", listenerAccountJoinLabel(account)))
 			continue
+		}
+		if !listenerAccountReadyForJoin(account) {
+			reasons = append(reasons, fmt.Sprintf("%s：监听账号当前不可用于加群", listenerAccountJoinLabel(account)))
+			continue
+		}
+		if listenerJoinShouldPreflightResolve(target) {
+			result, err := inspector.Inspect(ctx, telegram_client.TargetInspectRequest{
+				FilePath:   account.FilePath,
+				AccessType: account.AccessType,
+				Target:     target.Identifier,
+			})
+			if err != nil || !result.OK {
+				reason := firstNonEmpty(result.Reason, errorString(err), "监听号无法解析该目标")
+				if listenerJoinShouldTryAnotherAccount(reason) {
+					resolutionFailures = append(resolutionFailures, fmt.Sprintf("%s：%s", listenerAccountJoinLabel(account), reason))
+					continue
+				}
+				reasons = append(reasons, fmt.Sprintf("%s：%s", listenerAccountJoinLabel(account), reason))
+				continue
+			}
 		}
 		reserved, err := s.reserveListenerJoinQuotaWithPolicy(ctx, account.ID, req.DailyLimit, req.IntervalMinutes)
 		if err != nil {
@@ -396,10 +426,34 @@ func (s *Server) pickListenerJoinAccount(ctx context.Context, accounts []models.
 		}
 		return index, reserved, nil
 	}
+	if len(resolutionFailures) > 0 && len(reasons) == 0 {
+		return -1, models.ListenerAccount{}, fmt.Errorf("没有可解析该监听群的监听号：%s", strings.Join(resolutionFailures, "；"))
+	}
+	if len(resolutionFailures) > 0 {
+		reasons = append(reasons, resolutionFailures...)
+	}
 	if len(reasons) > 0 {
 		return -1, models.ListenerAccount{}, fmt.Errorf("没有可用监听号：%s", strings.Join(reasons, "；"))
 	}
 	return -1, models.ListenerAccount{}, fmt.Errorf("没有可用监听号")
+}
+
+func listenerJoinShouldPreflightResolve(target models.Target) bool {
+	switch strings.ToLower(strings.TrimSpace(target.Type)) {
+	case "group", "channel":
+		return strings.TrimSpace(target.Identifier) != ""
+	default:
+		return false
+	}
+}
+
+func listenerJoinShouldTryAnotherAccount(reason string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(reason))
+	return strings.Contains(lowered, "no user has") && strings.Contains(lowered, "as username")
+}
+
+func isListenerJoinResolutionExhaustedReason(reason string) bool {
+	return strings.Contains(strings.TrimSpace(reason), "没有可解析该监听群的监听号")
 }
 
 func (s *Server) refreshListenerJoinAccounts(ctx context.Context, accounts []models.ListenerAccount) []models.ListenerAccount {
